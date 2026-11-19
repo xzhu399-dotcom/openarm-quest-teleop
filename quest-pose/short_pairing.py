@@ -77,7 +77,8 @@ class PairingHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # Chromium uses the form page's policy when sending Origin on a navigation POST.
+        self.send_header("Referrer-Policy", "same-origin")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'none'; base-uri 'none'; "
                          f"frame-ancestors 'none'; form-action 'self' {self.server.receiver_origin}")

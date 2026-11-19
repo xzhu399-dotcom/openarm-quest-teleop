@@ -69,6 +69,7 @@ class PairingServerTests(unittest.TestCase):
         self.assertIn(b"<form", body)
         self.assertNotIn(TOKEN.encode(), body)
         self.assertIn("no-store", headers["Cache-Control"])
+        self.assertEqual(headers["Referrer-Policy"], "same-origin")
         status, headers, _ = self.request(self.pairing.code)
         self.assertEqual((status, headers["Location"]), (303, RECEIVER))
         cookie = SimpleCookie(headers["Set-Cookie"])["station_key"]

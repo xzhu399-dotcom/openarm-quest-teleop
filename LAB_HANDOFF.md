@@ -7,7 +7,7 @@ Use a real Quest 2 to test the simulated arms first. The physical test uses **on
 ```text
 Help me run the OpenArm + Meta Quest 2 lab handoff on this computer. Clone the private repository https://github.com/xzhu399-dotcom/openarm-quest-teleop.git, or update its existing checkout with git pull --ff-only after checking local changes. Read LAB_HANDOFF.md. Detect this computer's OS and LAN IP, prepare its Python environment, and run the offline checks. Preserve local calibration, recordings and other changes.
 
-First run the real Quest receiver with --pose-report --gripper-mode stick and synthetic cameras. Give me the exact pairing URL and wait for me to open it in Meta Quest Browser and select Start Quest. Guide me through the released-hand, clutch, wrist rotation, jaw retention, and A start/stop checks. Record a trial and verify it with replay.py and trial_metrics.py. Report the observed controller profile, receipt timing, IK rejections, and simulated tracking error.
+First run the real Quest receiver with --pose-report --gripper-mode stick and synthetic cameras. On the Windows lab PC, use Start-QuestSimulator.ps1 on bm2roar and give me the printed address and simulator PIN. On another OS, use the receiver's printed pairing URL. Wait for me to open it in Meta Quest Browser and select Start Quest. Guide me through the released-hand, clutch, wrist rotation, jaw retention, and A start/stop checks. Record a trial and verify it with replay.py and trial_metrics.py. Report the observed controller profile, receipt timing, IK rejections, and simulated tracking error.
 
 Next help me test one physical J8 gripper on the Mac. Start with read-only USB discovery and encoder feedback. Use the lab's verified adapter side, J8 encoder limits, measured open/close test angles, and test speed. Ask me for any missing measurements. Run the read-only gripper bench and compare requested and measured encoder degrees. Before physical motion, wait for my on-site go-ahead. I will run the --execute-gripper command and type the local confirmation myself. Keep J1–J7 out of the test. Help me record and verify a small opening, closing, and hold. At the end, give me the episode IDs, results, and anything still unverified. Keep hardware IDs and trials local.
 ```
@@ -43,6 +43,20 @@ python -m venv .venv-lab
 The receiver needs Python 3.9+ and OpenSSL for its default local HTTPS certificate. Optical cameras are optional. Install `opencv-python` in the environment only if using the real camera feeds, the image terminal, or their optional tests. Python reports skipped optional tests explicitly. Have the Quest Browser available and both Touch controllers awake. Windows can run the entire simulated-arm stage using the [PowerShell commands in the README](README.md#just-a-quest-2-and-a-computer). The supplied motor tools use POSIX facilities and the lab hardware procedure below uses the Mac.
 
 ## 2. Real Quest, simulated arms
+
+### Reconnect on the Windows lab PC
+
+1. Connect the PC and the headset to **bm2roar**. Open PowerShell in the checkout and run the [Windows launcher](Start-QuestSimulator.ps1). Leave its terminal open during collection.
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Start-QuestSimulator.ps1
+   ```
+
+2. In **Quest Browser**, enter the PC address printed by the launcher. You can type the bare IP or `http://<PC-IP>/`. The launcher redirects the browser to HTTPS before asking for a code. The PC's address can change when it rejoins Wi-Fi. If the browser shows a certificate warning, check that the address matches the one in PowerShell. The launcher generates a local certificate for that IP. For a managed headset, see the [trusted-certificate instructions](QUEST2_DATA_COLLECTION.md#2-connect-the-quest-2-to-the-workstation).
+3. Enter the six-digit **simulator pairing code** printed in PowerShell, choose **Open simulator**, then **Start Quest**. The launcher remembers the code across restarts in `%USERPROFILE%\.openarm-quest\simulator-pin.txt` for this Windows user. A second browser on the PC can use the same code to observe. Five wrong entries pause new pairing attempts for five minutes.
+4. Tap **A** on the right controller to start recording. Hold a side grip and move or turn that controller to drive the corresponding arm. Release the grip to leave the arm in place. Tap **A** again to save. Wait for **Trial saved** before shutting down. Stop the receiver with **Ctrl+C** in its terminal. After a reboot, repeat steps 1–3. If the PC only slept, rerun the launcher to see the address and PIN for the running simulator, then select **Start Quest** again in the headset.
+
+The launcher starts the simulated receiver and its HTTP/HTTPS entry points together. The following commands cover launching individual components and the Mac workflow.
 
 Join the same reachable LAN on the headset and workstation. Use the Mac's active Wi-Fi or Ethernet interface in place of `en0` if necessary. Keep this process running.
 

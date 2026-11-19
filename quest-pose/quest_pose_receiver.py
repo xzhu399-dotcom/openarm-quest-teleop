@@ -20,6 +20,7 @@ import tempfile
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from local_https import LocalHTTPSServer
 from station import Conflict, Station
 
 
@@ -94,6 +95,10 @@ class PoseHandler(BaseHTTPRequestHandler):
         key = jar.get("station_key")
         if key and hmac.compare_digest(key.value.encode(), token.encode()):
             return True
+        pairing_origin = getattr(self.server, "http_redirect_origin", None)
+        if pairing_origin and self.command == "GET" and self.path == "/":
+            self.reply(303, headers={"Location": pairing_origin + "/"})
+            return False
         self.problem(403, "Open the complete pairing URL printed in the workstation terminal.")
         return False
 
@@ -194,7 +199,8 @@ def make_tls_context(host, directory, certfile=None, keyfile=None):
 
 
 def make_server(host, port, station, legacy=False, tls=None):
-    server = ThreadingHTTPServer((host, port), PoseHandler)
+    server = (LocalHTTPSServer(host, port, PoseHandler, tls) if tls is not None
+              else ThreadingHTTPServer((host, port), PoseHandler))
     try:
         server.station = station
         server.legacy = legacy
@@ -205,8 +211,6 @@ def make_server(host, port, station, legacy=False, tls=None):
             server.hosts.add(f"localhost:{server.server_port}")
         if server.server_port == (443 if tls else 80):
             server.hosts.add(host)
-        if tls:
-            server.socket = tls.wrap_socket(server.socket, server_side=True)
         return server
     except BaseException:
         server.server_close()
@@ -235,6 +239,10 @@ def main():
                         help="Allow supervised J8 movement with --gripper-bench and local operator confirmation")
     parser.add_argument("--certfile", type=Path, help="Lab-trusted TLS certificate chain for the LAN IP (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Private key for --certfile (PEM)")
+    parser.add_argument("--pairing-code-file", type=Path, metavar="PATH",
+                        help="Serve the LAN simulator with a reusable six-digit PIN stored on this computer")
+    parser.add_argument("--pairing-port", type=int, help="HTTPS port for the simulator PIN page (default 443)")
+    parser.add_argument("--http-port", type=int, help="HTTP port that redirects to simulator pairing (default 80)")
     args = parser.parse_args()
     host = "127.0.0.1" if args.sim else str(args.host)
     if host == "0.0.0.0":
@@ -250,6 +258,10 @@ def main():
         parser.error("--execute-gripper requires --gripper-bench CALIBRATION.")
     if args.gripper_bench and (args.sim or args.legacy or args.terminal_view):
         parser.error("The physical gripper bench requires --host, the standard Quest page, and a text terminal.")
+    if args.pairing_code_file and (args.sim or args.legacy or args.gripper_bench):
+        parser.error("--pairing-code-file requires --host and the standard simulated-arm receiver.")
+    if not args.pairing_code_file and (args.http_port is not None or args.pairing_port is not None):
+        parser.error("--http-port and --pairing-port are options for --pairing-code-file.")
     try:
         camera_config = None
         if args.cameras:
@@ -261,10 +273,21 @@ def main():
             station = Station(args.episodes, gripper_mode=args.gripper_mode,
                               camera_config=camera_config, trial_events=trial_events)
             try:
-                with make_server(host, port, station, args.legacy, tls) as server:
+                with make_server(host, port, station, args.legacy, tls) as server, ExitStack() as pairing_pages:
                     suffix = f"?key={server.token}" if tls else ""
                     url = f"{server.scheme}://{host}:{server.server_port}/{suffix}"
-                    print(f"Open {url}", flush=True)
+                    if args.pairing_code_file:
+                        from local_https import http_redirect, serving
+                        from short_pairing import make_pairing_server
+                        pairing = pairing_pages.enter_context(make_pairing_server(
+                            url, 443 if args.pairing_port is None else args.pairing_port, tls,
+                            code_file=args.pairing_code_file))
+                        server.http_redirect_origin = pairing.origin
+                        pairing_pages.enter_context(http_redirect(pairing, 80 if args.http_port is None else args.http_port))
+                        pairing_pages.enter_context(serving(pairing))
+                        print(f"Quest Browser: {pairing.origin}\nSimulator pairing code: {pairing.pairing.code}", flush=True)
+                    else:
+                        print(f"Open {url}", flush=True)
                     scope = "Simulated arms and jaws"
                     if args.gripper_bench:
                         scope = "Physical J8 execution requested" if args.execute_gripper else "Read-only physical J8 test"

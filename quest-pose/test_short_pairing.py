@@ -1,4 +1,5 @@
 import http.client
+from concurrent.futures import ThreadPoolExecutor
 from http.cookies import SimpleCookie
 from pathlib import Path
 import ssl
@@ -8,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from quest_pose_receiver import make_tls_context
-from short_pairing import make_pairing_server, parse_pairing_url
+from short_pairing import FixedPairingCode, load_simulator_pin, make_pairing_server, parse_pairing_url
 
 
 HOST = "127.0.0.1"
@@ -18,6 +19,18 @@ PAIRING_URL = RECEIVER + "?key=" + TOKEN
 
 
 class PairingURLTests(unittest.TestCase):
+    def test_restarts_and_simultaneous_starts_share_one_pin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "user-settings" / "simulator-pin.txt"
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                codes = list(pool.map(load_simulator_pin, [path] * 8))
+            self.assertRegex(codes[0], r"^[0-9]{6}$")
+            self.assertEqual(set(codes), {path.read_text().strip()})
+            path.write_text("broken\n")
+            with self.assertRaises(ValueError):
+                load_simulator_pin(path)
+            self.assertEqual(path.read_text(), "broken\n")
+
     def test_only_local_receiver_pairing_urls_are_accepted(self):
         self.assertEqual(parse_pairing_url(PAIRING_URL), (HOST, 8443, TOKEN))
         for url in (RECEIVER, PAIRING_URL.replace("https:", "http:"),
@@ -94,6 +107,21 @@ class PairingServerTests(unittest.TestCase):
         for _ in range(5):
             self.assertFalse(self.pairing.redeem(wrong))
         self.assertFalse(self.pairing.redeem(self.pairing.code))
+
+    def test_fixed_simulator_pin_pairs_multiple_browsers_and_recovers_after_cooldown(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "pin"
+            path.write_text("014728\n")
+            self.server.pairing = FixedPairingCode(path)
+            for attempt in range(2):
+                self.assertEqual(self.request("014728")[0], 303)
+            with patch("short_pairing.time.monotonic", return_value=1000):
+                for attempt in range(4):
+                    self.assertEqual(self.request("999999")[0], 403)
+                self.assertEqual(self.request("999999")[0], 429)
+                self.assertEqual(self.request("014728")[0], 429)
+            with patch("short_pairing.time.monotonic", return_value=1301):
+                self.assertEqual(self.request("014728")[0], 303)
 
     def test_expired_code_cannot_be_redeemed(self):
         with patch("short_pairing.time.monotonic", return_value=self.pairing.expires_at + 1):

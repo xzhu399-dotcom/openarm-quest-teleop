@@ -1,11 +1,15 @@
-"""Pair Quest Browser to a running LAN receiver using its IP and a one-time code."""
+"""Pair Quest Browser to a running local receiver over HTTPS."""
 
 import argparse
+from collections import deque
+from contextlib import ExitStack
 import getpass
 import hmac
 from http import cookies
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from ipaddress import IPv4Address, IPv4Network
+import os
+from pathlib import Path
 import re
 import secrets
 import subprocess
@@ -14,6 +18,7 @@ import tempfile
 import threading
 import time
 
+from local_https import LocalHTTPSServer, http_redirect, https_origin
 from quest_pose_receiver import make_tls_context
 
 
@@ -40,11 +45,9 @@ def parse_pairing_url(url):
     return str(address), port, match[3]
 
 
-def origin(host, port):
-    return f"https://{host}" if port == 443 else f"https://{host}:{port}"
-
-
 class PairingCode:
+    unavailable = (410, UNAVAILABLE)
+
     def __init__(self):
         self.code = f"{secrets.randbelow(1_000_000):06d}"
         self.expires_at = time.monotonic() + 15 * 60
@@ -62,6 +65,58 @@ class PairingCode:
                 self.remaining = 0
                 return True
             self.remaining -= 1
+            return False
+
+
+def load_simulator_pin(path):
+    """Create a per-user PIN once, including when two receiver launches overlap."""
+    path = Path(path)
+    if not path.exists():
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=path.parent)
+        pending = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="ascii") as temp:
+                temp.write(f"{secrets.randbelow(1_000_000):06d}\n")
+            try:
+                # Publish the complete file only if another launcher hasn't created it.
+                os.link(pending, path)
+            except FileExistsError:
+                pass
+        finally:
+            pending.unlink()
+    code = path.read_text(encoding="ascii").rstrip("\n")
+    if not re.fullmatch(r"[0-9]{6}", code):
+        raise ValueError(f"Expected six digits in the local simulator PIN file: {path}")
+    return code
+
+
+class FixedPairingCode:
+    unavailable = (429, "Too many incorrect codes. Try again in five minutes.")
+
+    def __init__(self, path):
+        self.code = load_simulator_pin(path)
+        self.failures = deque()
+        self.lock = threading.Lock()
+
+    def _can_try(self, now):
+        while self.failures and self.failures[0] <= now - 300:
+            self.failures.popleft()
+        return len(self.failures) < 5
+
+    def available(self):
+        with self.lock:
+            return self._can_try(time.monotonic())
+
+    def redeem(self, value):
+        with self.lock:
+            now = time.monotonic()
+            if not self._can_try(now):
+                return False
+            if value.isascii() and hmac.compare_digest(self.code, value):
+                self.failures.clear()
+                return True
+            self.failures.append(now)
             return False
 
 
@@ -116,7 +171,7 @@ class PairingHandler(BaseHTTPRequestHandler):
             self.redirect()
             return False
         if not self.server.pairing.available():
-            self.reply(410, UNAVAILABLE)
+            self.reply(*self.server.pairing.unavailable)
             return False
         return True
 
@@ -125,17 +180,20 @@ class PairingHandler(BaseHTTPRequestHandler):
             self.reply(200, FORM, mime="text/html; charset=utf-8")
 
     def do_POST(self):
-        if not self.ready():
-            return
-        if self.headers.get_content_type() != "application/x-www-form-urlencoded":
-            self.reply(415, "Use the pairing form.")
-            return
         lengths = self.headers.get_all("Content-Length", [])
         if (self.headers.get("Transfer-Encoding") or len(lengths) != 1
                 or not re.fullmatch(r"[0-9]{1,2}", lengths[0]) or not 1 <= int(lengths[0]) <= 64):
             self.reply(400, "Invalid code submission.")
             return
-        match = re.fullmatch(rb"code=([0-9]{6})", self.rfile.read(int(lengths[0])))
+        # Consume the bounded form body before rejecting an origin, host, or
+        # cookie. Closing with an unread TLS record can truncate the reply on Windows.
+        body = self.rfile.read(int(lengths[0]))
+        if not self.ready():
+            return
+        if self.headers.get_content_type() != "application/x-www-form-urlencoded":
+            self.reply(415, "Use the pairing form.")
+            return
+        match = re.fullmatch(rb"code=([0-9]{6})", body)
         value = match[1].decode("ascii") if match else ""
         if self.server.pairing.redeem(value):
             self.redirect(newly_paired=True)
@@ -143,23 +201,23 @@ class PairingHandler(BaseHTTPRequestHandler):
             retry_form = FORM.replace("<form ", "<p>Incorrect code. Try again.</p><form ")
             self.reply(403, retry_form, mime="text/html; charset=utf-8")
         else:
-            self.reply(410, UNAVAILABLE)
+            self.reply(*self.server.pairing.unavailable)
 
 
-def make_pairing_server(url, port, tls):
+def make_pairing_server(url, port, tls, *, code_file=None):
     host, receiver_port, token = parse_pairing_url(url)
     if not 0 <= port <= 65535 or port == receiver_port:
         raise ValueError("Choose a valid pairing port different from the receiver's port.")
-    server = ThreadingHTTPServer((host, port), PairingHandler)
+    server = LocalHTTPSServer(host, port, PairingHandler, tls)
     try:
-        server.socket = tls.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
-        server.origin = origin(host, server.server_port)
-        server.receiver_origin = origin(host, receiver_port)
+        server.origin = https_origin(host, server.server_port)
+        server.http_redirect_origin = server.origin
+        server.receiver_origin = https_origin(host, receiver_port)
         server.hosts = {f"{host}:{server.server_port}"}
         if server.server_port == 443:
             server.hosts.add(host)
         server.token = token
-        server.pairing = PairingCode()
+        server.pairing = PairingCode() if code_file is None else FixedPairingCode(code_file)
         return server
     except BaseException:
         server.server_close()
@@ -169,6 +227,8 @@ def make_pairing_server(url, port, tls):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=443, help="Short address HTTPS port (default 443)")
+    parser.add_argument("--http-port", type=int, metavar="PORT",
+                        help="Also redirect HTTP visitors to this pairing page (usually port 80)")
     parser.add_argument("--certfile", help="Local TLS certificate chain valid for the receiver IP")
     parser.add_argument("--keyfile", help="Matching local TLS private key")
     args = parser.parse_args(argv)
@@ -182,7 +242,9 @@ def main(argv=None):
         host, _, _ = parse_pairing_url(url)
         with tempfile.TemporaryDirectory(prefix="quest-pairing-") as directory:
             tls = make_tls_context(host, directory, args.certfile, args.keyfile)
-            with make_pairing_server(url, args.port, tls) as server:
+            with make_pairing_server(url, args.port, tls) as server, ExitStack() as redirects:
+                if args.http_port is not None:
+                    redirects.enter_context(http_redirect(server, args.http_port))
                 print(f"Open {server.origin}\nPairing code: {server.pairing.code} (one use, 15 minutes)", flush=True)
                 server.serve_forever()
     except KeyboardInterrupt:

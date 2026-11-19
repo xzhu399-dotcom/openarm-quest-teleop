@@ -4,6 +4,8 @@ Use Quest Touch controllers to move a simulated OpenArm, watch a selected robot-
 
 **Taking this to a new lab computer?** Start with the [lab handoff](LAB_HANDOFF.md) for the fresh-clone procedure, real-Quest simulation check and physical gripper bench test.
 
+On the Windows lab PC, use the [bm2roar reconnection steps](LAB_HANDOFF.md#reconnect-on-the-windows-lab-pc) to launch the simulator, reuse its local six-digit code, and open it from the headset by typing the PC's IP address.
+
 ## Run at the lab
 
 On the computer you will use with the Quest, use a GitHub account with access to this private repository. Open a terminal and run these commands once.

@@ -31,6 +31,15 @@ python quest-pose/replay.py examples/mouse-robot
 python quest-pose/trial_metrics.py examples/mouse-robot
 ```
 
+In Windows PowerShell, use the installed Python 3 interpreter to create the environment. If `python` opens the Microsoft Store, use the full path to your installed `python.exe` in the first command (for example, `& 'C:\path\to\python.exe' -m venv .venv-lab`).
+
+```powershell
+python -m venv .venv-lab
+.\.venv-lab\Scripts\python.exe -m unittest discover -s quest-pose -q
+.\.venv-lab\Scripts\python.exe quest-pose/replay.py examples/mouse-robot
+.\.venv-lab\Scripts\python.exe quest-pose/trial_metrics.py examples/mouse-robot
+```
+
 The receiver needs Python 3.9+ and OpenSSL for its default local HTTPS certificate. Optical cameras are optional. Install `opencv-python` in the environment only if using the real camera feeds, the image terminal, or their optional tests. Python reports skipped optional tests explicitly. Have the Quest Browser available and both Touch controllers awake. Windows can run the entire simulated-arm stage using the [PowerShell commands in the README](README.md#just-a-quest-2-and-a-computer). The supplied motor tools use POSIX facilities and the lab hardware procedure below uses the Mac.
 
 ## 2. Real Quest, simulated arms
@@ -42,7 +51,19 @@ lab_ip="$(ipconfig getifaddr en0)"
 python quest-pose/quest_pose_receiver.py --host "$lab_ip" --pose-report --gripper-mode stick
 ```
 
-Enter the **complete printed HTTPS URL** in the Quest Browser, including the port and `?key=...`. Click **Start Quest** on the headset. Optionally open the same address on the Mac as an observer. If the headset cannot load it, check TCP 8443, firewall permission on the lab LAN, and Wi-Fi client isolation. Every receiver restart prints a new key. Certificate options are in the [pairing guide](QUEST2_DATA_COLLECTION.md#2-connect-the-quest-2-to-the-workstation).
+On Windows, find the IPv4 address of the adapter on the headset's network and launch from the same checkout:
+
+```powershell
+ipconfig
+$labIP = Read-Host 'Enter the workstation IPv4 address on the Quest network'
+.\.venv-lab\Scripts\python.exe quest-pose/quest_pose_receiver.py --host $labIP --pose-report --gripper-mode stick
+```
+
+Put on the Quest 2 and open **Browser** from the headset's app library. Select the browser address bar and enter the **complete printed HTTPS URL**, including the port and every character after `?key=`. The **Robot simulator** page should appear. Select **Start Quest** on the headset and allow the immersive session if prompted. Open the same full address on the workstation to observe or capture the initial pose. Each browser pairs separately.
+
+If the workstation changes Wi-Fi, reconnect the headset to the same reachable LAN and check the workstation's current IPv4 address. If the address changed, stop the receiver with Ctrl+C, restart with `--host` set to the new address, and open the newly printed pairing URL. Each restart generates a fresh key.
+
+To check headset reachability, open a fresh Quest Browser tab and enter just `https://<workstation-ip>:<port>/` using the IP and port printed by the running receiver. Its message asking for the complete pairing URL (HTTP 403), or the station page if already paired, confirms the headset reached the receiver. Use the full URL to pair. For a timeout, check the workstation's firewall permission for the receiver port (default TCP 8443) and Wi-Fi client isolation. For a certificate error, see the [pairing guide](QUEST2_DATA_COLLECTION.md#2-connect-the-quest-2-to-the-workstation).
 
 | Test | What to do | Evidence to look for |
 | --- | --- | --- |

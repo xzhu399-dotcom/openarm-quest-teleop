@@ -133,6 +133,45 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(saved["trial_return"]["status"], "stayed")
         self.assertEqual(self.ok("/sample", quest_sample(5, .10))["hands"]["right"]["tool"], moved)
 
+    def test_restore_initial_button_and_chord_preserve_recording_and_marker(self):
+        control = {"action": "restore_initial"}
+        self.assertEqual(self.ok("/control", control)["trial_return"]["status"], "skipped")
+        first = self.ok("/sample", quest_sample(1))
+        ready = self.ok("/control", control)
+        self.assertEqual(ready["trial_return"]["status"], "completed")
+        self.assertFalse(ready["recording"]["active"])
+
+        self.ok("/sample", quest_sample(2, grip=1))
+        self.ok("/sample", quest_sample(3, .03, 1))
+        start = self.ok("/sample", quest_sample(4, events=[{"id":1, "action":"record"}]))
+        chord = {"id":2, "action":"restore_initial"}
+        returning = self.ok("/sample", quest_sample(5, events=[chord]))
+        self.assertEqual(returning["trial_return"]["status"], "returning")
+        self.assertEqual(returning["trial_return"]["target"], "home")
+        self.assertEqual(returning["ack"], 2)
+        self.assertEqual(returning["camera"]["id"], first["camera"]["id"])
+        self.assertTrue(returning["recording"]["active"])
+        self.assertEqual(returning["recording"]["episode"], start["recording"]["episode"])
+        self.ok("/sample", quest_sample(6, events=[chord]))
+        end = self.ok("/sample", quest_sample(7, events=[{"id":3, "action":"record"}]))
+        self.assertEqual(end["recording"]["last_episode_status"], "saved")
+        after = self.ok("/control", control)
+        self.assertFalse(after["recording"]["active"])
+        self.assertEqual(after["trial_return"]["status"], "returning")
+        episode = self.directory / end["recording"]["episode"]
+        event_kinds = [json.loads(line)["kind"] for line in (episode/"events.jsonl").read_text().splitlines()]
+        self.assertEqual(event_kinds.count("restore_initial"), 1)
+        self.assertNotIn("marker", event_kinds)
+
+    def test_physical_bench_rejects_restore_without_starting_a_path(self):
+        self.station.gripper_bench = {"arm":"right", "mode":"shadow"}
+        self.ok("/sample", quest_sample(1))
+        self.assertEqual(self.request("/control", {"action":"restore_initial"})[0], 409)
+        state = self.ok("/sample", quest_sample(2, events=[{"id":1, "action":"restore_initial"}]))
+        self.assertEqual(state["ack"], 1)
+        self.assertEqual(state["trial_return"]["status"], "idle")
+        self.assertFalse(state["recording"]["active"])
+
     def test_quest_camera_loss_and_unreachable_goal_do_not_latch_motion(self):
         first = self.ok("/sample", quest_sample(1, grip=1))
         origin = first["hands"]["right"]["tool"]["p"][0]

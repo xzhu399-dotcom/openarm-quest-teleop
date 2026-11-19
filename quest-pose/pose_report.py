@@ -27,7 +27,9 @@ def report_lines(state):
     if state.get("grip_only"):
         motion = state["reason"] or "side-grip control"
     frame = ascii(state["frame"]) if state["frame"] is not None else "waiting for input"
-    lines = [f"{recording} | {motion} | trial return {state['trial_return']['status']}",
+    result = state["trial_return"]
+    destination = "home" if result.get("target") == "home" else "trial"
+    lines = [f"{recording} | {motion} | {destination} return {result['status']}",
              f"Frame {frame} | sample {state['seq']} | {state['gripper_mode']} gripper",
              f"Headset  {format_pose(state['head'])}"]
     bench = state.get("gripper_bench")

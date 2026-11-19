@@ -333,15 +333,39 @@ def exercise_quest(client, address, station):
     assert min(pixels.values()) > 30, pixels
     wait_for(lambda: station.state()["grip_only"] and hand()["status"] == "released"
              and client.evaluate("document.getElementById('hold-panel').hidden"), "Quest grip controls")
+    client.click("restore_initial")
+    def restored():
+        result = station.state()["trial_return"]
+        return result.get("target") == "home" and result["status"] == "completed"
+    wait_for(restored, "workstation button restores the simulator's initial pose")
     before = check_robot(hand())
     def button(index, value, side="right"):
         client.evaluate(f"questFixture.button({index},{value},{json.dumps(side)})")
         wait_for(lambda: station.state()["hands"][side]["buttons"][index]["pressed"] == bool(value),
                  f"raw {side} button {index} = {value}")
+
+    def restore_chord(first, second):
+        ack = station.state()["ack"]
+        camera = station.recorder.status()["selected_camera"]
+        active = station.recorder.status()["active"]
+        button(4,1,first)
+        assert station.state()["ack"] == ack
+        button(4,1,second)
+        wait_for(lambda: station.state()["ack"] == ack + 1, "one A + X restore event")
+        # Re-pressing one button while the other remains down is the same gesture.
+        button(4,0,first)
+        button(4,1,first)
+        button(4,0,second)
+        button(4,0,first)
+        wait_for(restored, "Quest chord restores the initial joints")
+        assert station.state()["ack"] == ack + 1
+        assert station.recorder.status()["active"] == active
+        assert station.recorder.status()["selected_camera"] == camera
+
     button(3,1,"left")
     button(4,1)
-    wait_for(lambda: station.recorder.status()["active"], "A starts Quest trial with left stick clicked")
     button(4,0)
+    wait_for(lambda: station.recorder.status()["active"], "tapping A starts Quest trial with left stick clicked")
     button(3,0,"left")
     wait_for(lambda: client.evaluate("document.getElementById('finish_return').hidden"
                                      " && document.getElementById('face-b').hidden"), "Quest recording controls")
@@ -369,18 +393,22 @@ def exercise_quest(client, address, station):
     assert hand()["robot"]["jaw_opening_m"] == grasp["jaw_opening_m"]
     old_view = station.recorder.status()["selected_camera"]
     button(4,1,"left")
-    wait_for(lambda: station.recorder.status()["selected_camera"] != old_view, "X switches the view")
     button(4,0,"left")
+    wait_for(lambda: station.recorder.status()["selected_camera"] != old_view, "tapping X switches the view")
+    restore_chord("right", "left")
+    assert hand()["robot"]["joint_angles_rad"] == before["joint_angles_rad"]
+    assert hand()["robot"]["jaw_opening_m"] == grasp["jaw_opening_m"]
     button(3,1,"left")
     button(4,1)
-    wait_for(lambda: not station.recorder.status()["active"], "left stick click + A saves")
     button(4,0)
+    wait_for(lambda: not station.recorder.status()["active"], "left stick click + A tap saves")
     button(3,0,"left")
     wait_for(lambda: station.state()["trial_return"]["status"] == "stayed", "Quest trial ends in place")
     endpoint = check_robot(hand())
-    assert endpoint["joint_angles_rad"] == grasp["joint_angles_rad"]
+    assert endpoint["joint_angles_rad"] == before["joint_angles_rad"]
     assert endpoint["jaw_opening_m"] == grasp["jaw_opening_m"]
     wait_for(lambda: client.evaluate("questFixture.hudLines.includes('Trial saved')"), "save painted in headset")
+    restore_chord("left", "right")
     client.click("stop")
     wait_for(lambda: station.state()["owner"] is None, "Quest disconnect")
     assert not client.errors, client.errors
@@ -454,8 +482,8 @@ def exercise_camera_workflow(client, address, station):
         client.evaluate(f"questFixture.button({index},{int(pressed)},{json.dumps(side)})")
         wait_for(lambda: station.state()["hands"][side]["buttons"][index]["pressed"] == pressed, "button delivery")
     button(4,True,"right")
-    wait_for(lambda: station.recorder.status()["active"], "file camera recording")
     button(4,False,"right")
+    wait_for(lambda: station.recorder.status()["active"], "file camera recording")
     for i, name in enumerate(("overview","left_wrist","right_wrist")):
         if i:
             button(4,True,"left")
@@ -484,8 +512,8 @@ def exercise_camera_workflow(client, address, station):
     assert hand()["closure"] == held
     button(1,False,"right")
     button(4,True,"right")
-    wait_for(lambda: not station.recorder.status()["active"], "file camera trial saved")
     button(4,False,"right")
+    wait_for(lambda: not station.recorder.status()["active"], "file camera trial saved")
     name = station.recorder.status()["episode"]
     wait_for(lambda: client.evaluate("questFixture.hudLines.includes('Trial saved')"), "Quest save receipt")
     client.evaluate("""window.workingFetch=window.fetch;

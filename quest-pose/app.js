@@ -21,6 +21,7 @@ let xrSession = null, xrMode = '', switching = false, inFlight = false;
 let state = {}, latestApplied = 0, requestNumber = 0, lastSend = -Infinity, lastRoundTrip = null;
 let visibleLoss = 0, frameReset = 0, signalCounter = 0;
 let events = [], nextEvent = 1, edges = new Map(), eventOverflow = false;
+let restoreChord = false;
 let gripHistory = {};
 let camera = {id: '', label: '', index: null, arrival: 0, sourceAge: 0};
 let cameraProblem = '';
@@ -75,7 +76,7 @@ function beginInput(name, frame) {
   sessionId = [...crypto.getRandomValues(new Uint32Array(4))].map(v => v.toString(16).padStart(8,'0')).join('');
   seq = 0; lastSend = -Infinity; inFlight = false; visibleLoss = 0; frameReset = 0;
   freshDisplayAt = performance.now();
-  events = []; nextEvent = 1; edges.clear(); gripHistory = {}; eventOverflow = false; displayedId = '';
+  events = []; nextEvent = 1; resetEdges(); gripHistory = {}; eventOverflow = false; displayedId = '';
   message();
   setModeControls();
 }
@@ -131,7 +132,10 @@ function releaseMouseGrip() {
   if (stickMode()) updateJawInput(0);
   drag = null;
 }
-function resetEdges() { edges = new Map(); }
+function resetEdges() {
+  edges.clear();
+  restoreChord = false;
+}
 function enqueue(action) {
   if (events.length >= 24) {
     // Report the input gap to the receiver before accepting more button events.
@@ -146,9 +150,12 @@ function enqueue(action) {
   events.push({id: nextEvent++, action});
 }
 function readEdges(hands) {
+  if (mode === 'quest' && state.gripper_bench === undefined) return;
+  const questSimulator = mode === 'quest' && state.gripper_bench === null;
+  const taps = [];
   for (const side of sides) {
     const hand = hands[side];
-    const actions = side === 'left' ? ['view','mark'] : state.grip_only ? ['record'] : ['record','hold'];
+    const actions = side === 'left' ? ['view','mark'] : questSimulator ? ['record'] : ['record','hold'];
     if (!hand?.pose || !touchLayout(hand.profile,side).length) {
       for (const action of actions) edges.delete(action);
       continue;
@@ -156,9 +163,19 @@ function readEdges(hands) {
     for (let i=0; i<actions.length; i++) {
       const action = actions[i], down = Boolean(hand.buttons[4+i]?.pressed);
       const previous = edges.get(action);
-      if (down && previous?.source === hand.source && previous.down === false) {
+      const sameSource = previous && previous.source === hand.source;
+      const pressed = down && sameSource && previous.down === false;
+      if (questSimulator && (action === 'record' || action === 'view')) {
+        // A and X are solo taps on release. Overlapping presses form one chord,
+        // even when the two hands press on different XR frames.
+        const pending = down && sameSource && !restoreChord && (pressed || previous.pending);
+        if (!down && sameSource && previous.pending && !restoreChord) taps.push(action);
+        edges.set(action, {source:hand.source, down, pending});
+        continue;
+      }
+      if (pressed) {
         const left = hands.left;
-        const returnChord = !state.grip_only && action === 'record' && left?.pose &&
+        const returnChord = action === 'record' && left?.pose &&
           touchLayout(left.profile,'left').length && left.buttons[3]?.pressed;
         // Use the explicit finish action even if this browser's recording state
         // is stale. A finish chord received while idle must never start a trial.
@@ -166,6 +183,16 @@ function readEdges(hands) {
       }
       edges.set(action, {source:hand.source, down});
     }
+  }
+  if (questSimulator) {
+    const a = edges.get('record'), x = edges.get('view');
+    if (!restoreChord && a?.pending && x?.pending) {
+      restoreChord = true;
+      enqueue('restore_initial');
+    } else {
+      for (const action of taps) enqueue(action);
+    }
+    if (!a?.down && !x?.down) restoreChord = false;
   }
 }
 
@@ -406,7 +433,7 @@ pad.addEventListener('wheel', e => {
   if (e.altKey || mouseMode === 'rotate') mouse.q = multiply(mouse.q,axisTurn([0,0,1],dy*.002));
   else if (mouseMode === 'move') mouse.p[2] += dy*.0004;
 }, {passive:false});
-for (const action of ['capture','record','finish_return','mark','view','hold','resume']) {
+for (const action of ['capture','restore_initial','record','finish_return','mark','view','hold','resume']) {
   $(action).addEventListener('click', () => control(action));
 }
 function selectSide(value) {
@@ -482,8 +509,12 @@ function render() {
   $('capture').disabled = !state.session || !Object.values(state.hands || {}).some(v => v?.pose);
   $('timer').textContent = clock(rec.elapsed_s);
   const returning = state.trial_return?.status === 'returning';
+  $('restore_initial').hidden = Boolean(state.gripper_bench);
+  $('restore_initial').disabled = returning || !state.owner || !state.head || !state.visible || state.held ||
+    !Object.values(state.hands || {}).some(hand => hand.tracked);
+  $('home-help').hidden = !state.grip_only || Boolean(state.gripper_bench);
   $('record').textContent = rec.active ? (state.grip_only ? 'Save recording' : 'Save & stay') : 'Start recording';
-  $('record').disabled = returning;
+  $('record').disabled = returning && state.trial_return.target !== 'home';
   $('finish_return').hidden = !rec.active || Boolean(state.grip_only);
   $('mark').disabled = !rec.active;
   const trial = trialStatus();
@@ -520,9 +551,14 @@ function trialStatus() {
   const failure = {start_failed:'Trial did not start',save_failed:'Trial save failed',
                    incomplete:'Incomplete trial'}[result.status];
   if (failure) return {title:failure, detail:result.reason || rec.error || ''};
-  if (rec.active) return {title:'REC ' + clock(rec.elapsed_s), detail:''};
-  const title = {incomplete:'Incomplete trial', interrupted:'Interrupted trial', saved:'Trial saved'}[rec.last_episode_status]
-      || (rec.episode && result.status !== 'idle' ? 'Trial saved' : 'Idle');
+  const title = rec.active ? 'REC ' + clock(rec.elapsed_s) :
+    ({incomplete:'Incomplete trial', interrupted:'Interrupted trial', saved:'Trial saved'}[rec.last_episode_status]
+      || (rec.episode && result.status !== 'idle' ? 'Trial saved' : 'Idle'));
+  if (result.target === 'home') {
+    const prefix = {skipped:'Return skipped. ', cancelled:'Return cancelled. '}[result.status] || '';
+    return {title, detail:prefix + result.reason};
+  }
+  if (rec.active) return {title, detail:''};
   const outcomes = {
     stayed:state.grip_only ? '' : 'Arms stayed at the ending pose.',
     returning:'Returning to the trial-start pose.',

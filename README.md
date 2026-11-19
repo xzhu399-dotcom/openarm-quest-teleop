@@ -17,6 +17,33 @@ cd openarm-quest-teleop
 
 Run the receiver from the directory containing this README. Put the Quest 2 and workstation on the same LAN and allow incoming connections to the receiver (TCP 8443 by default). The headset runs the existing Meta Quest Browser.
 
+### Use a different Wi-Fi network
+
+1. If you're collecting, save the trial and wait for **Trial saved**. Stop the running receiver with **Ctrl+C** in its terminal. Connect the PC and the headset to the new Wi-Fi. It must allow the two devices to reach each other.
+2. On Windows, open PowerShell in the repository folder and list the active network profiles. Find the Wi-Fi adapter and replace `New Lab WiFi` with the **Name** shown for that adapter.
+
+   ```powershell
+   Get-NetConnectionProfile | Select-Object Name, InterfaceAlias
+   powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Start-QuestSimulator.ps1 -NetworkName "New Lab WiFi"
+   ```
+
+   If the launcher cannot select an address, run `ipconfig`. Find the PC's **IPv4 Address** under its active Wi-Fi adapter and substitute it for the example below.
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Start-QuestSimulator.ps1 -LabIP 192.168.1.42
+   ```
+
+3. Open the **new HTTPS address printed by the launcher** in Quest Browser. Enter the printed PIN if prompted, select **Open simulator**, then **Start Quest**. The same Windows user on the same PC keeps the same PIN across networks. A new workstation or Windows account generates its own PIN on first launch.
+
+If the address opens on the PC but times out on the headset, check whether the Wi-Fi isolates devices. On a managed network, ask the administrator whether the headset can reach the PC on TCP 443 (pairing) and 8443 (simulator). The optional HTTP-to-HTTPS redirect uses TCP 80. On macOS, rerun the receiver command below with the active network interface and open its newly printed full HTTPS URL.
+
+### Share this private repository with a labmate
+
+1. As the owner, open the repository on GitHub and select **Settings → Collaborators → Add people**. Find the labmate's GitHub username and send the invitation. [Repository access settings](https://github.com/xzhu399-dotcom/openarm-quest-teleop/settings/access) · [GitHub invitation guide](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/inviting-collaborators-to-a-personal-repository)
+2. Have the labmate accept the invitation while signed in to that account. They can then use the clone command above on their computer and follow the lab handoff to start their own simulator. [Repository](https://github.com/xzhu399-dotcom/openarm-quest-teleop) · [Lab handoff](LAB_HANDOFF.md)
+
+Collaborators on a private personal repository can read and push code. If the lab needs read-only GitHub access, an organization-owned private repository supports the **Read** role. [Personal repository permissions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/permission-levels-for-a-personal-account-repository) · [Organization repository roles](https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization)
+
 ### Just a Quest 2 and a computer
 
 Run the receiver with `--pose-report` for a text readout of the headset, both controllers, grippers and recording events. It works without an arm, cameras or OpenCV. Use Python 3.9+ and OpenSSL for the default HTTPS pairing certificate.
@@ -162,8 +189,11 @@ The page reads viewer pose and each controller's grip pose in one stationary `lo
 | Rotate the clutched controller | Pitch, yaw and roll the gripper around its tool center |
 | Right A | Start or save an episode. Held side grips continue to control the arms. |
 | Left X | Cycle overview, left wrist and right wrist |
+| Right A + left X together, with both side grips released | Return both simulated arms to the pose they had when the simulator started. Squeeze either side grip to cancel. |
 | Left Y | Insert an episode marker |
 | Headset | Look around without moving a tool |
+
+**To return the robot home**, release both side grips, press right **A** and left **X** so their presses overlap, then let go of both buttons. The arms move back smoothly and keep their current jaw openings. You can do this before, during, or after a trial. An active recording continues through the motion and the selected camera stays in place. From the workstation, **Return arms to home** does the same thing with a live input session. **Capture initial pose** sets the reference for measuring controller displacement. The robot's home pose is set when the simulator starts.
 
 Synthetic mode shows the robot in stereo and one selected synthetic camera panel. With `--cameras cameras.lab.json`, OpenCV acquires and records three physical cameras or local video files. The headset shows only the selected camera on its panel. Add `--terminal-view` to see the same feed and input telemetry inside the workstation terminal. Preview uses same-origin HTTPS image requests. End-to-end image latency still needs measurement on the lab rig.
 

@@ -155,6 +155,11 @@ class Station:
                 self.recorder.cycle_camera()
             elif action == "mark":
                 self.recorder.mark()
+            elif action == "restore_initial" and self.gripper_bench is None:
+                if pending_end is not None:
+                    state = self._end_trial(pending_end, state, raw)
+                    pending_end = None
+                self._restore_initial(stamp)
         if pending_end is not None:
             return self._end_trial(pending_end, state, raw)
         if state["trial_return"] != self.engine.trial.result:
@@ -166,6 +171,13 @@ class Station:
         if self.gripper_bench is not None:
             state = dict(state, gripper_bench=self.gripper_bench)
         self.recorder.sample(raw, state, stamp)
+
+    def _restore_initial(self, stamp=None):
+        if self.gripper_bench is not None:
+            raise Conflict("Restoring the initial arm position is available only in simulation.")
+        state = self.engine.restore_initial()
+        self.recorder.event("restore_initial", state["trial_return"], host_ns=stamp)
+        return state
 
     def control(self, data, local):
         action = data.get("action")
@@ -179,6 +191,8 @@ class Station:
                 if state["captured"]:
                     self.recorder.save_reference(state)
                     self.recorder.event("capture", {"sides": state["captured"], "hands": state["hands"]})
+            elif action == "restore_initial":
+                state = self._restore_initial()
             elif action == "resume":
                 state = self.engine.resume() if self._camera_ready() else self.engine.snapshot()
             elif action == "hold":

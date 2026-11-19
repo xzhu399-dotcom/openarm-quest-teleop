@@ -17,6 +17,7 @@ The table describes the simulated arms. For the optional J8 bench, follow the ph
 | Adjust jaw opening in **stick** mode | While clutched, tilt that hand's **thumbstick up** to open or **down** to close | Tilt controls adjustment speed. Let the stick spring to center to retain the exact opening while moving or rotating the arm. |
 | Start a trial | Tap **right A** while idle | Starts recording and captures both simulated arms' starting joint positions. A does not engage a clutch. |
 | End the trial | Tap **right A** while recording | Saves the episode. Side-grip control continues. Release the grips to leave both arms at the endpoint. |
+| Return the simulated arms home | Release both side grips. Press **right A + left X** together, then release both buttons. The workstation also has a **Return arms to home** button. | Both arms move to their simulator startup joint positions while keeping their jaw openings. A recording in progress continues. Squeeze either grip to cancel. |
 | Switch the displayed camera | Tap **left X** | Cycles **Overview → Left wrist → Right wrist → Overview**. All three cameras continue recording. |
 | Mark a moment | Tap **left Y** during recording | Writes a timestamped marker, for example contact or a slip. |
 

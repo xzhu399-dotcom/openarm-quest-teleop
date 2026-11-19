@@ -7,14 +7,16 @@ Use a real Quest 2 to test the simulated arms first. The physical test uses **on
 ```text
 Help me run the OpenArm + Meta Quest 2 lab handoff on this computer. Clone the private repository https://github.com/xzhu399-dotcom/openarm-quest-teleop.git, or update its existing checkout with git pull --ff-only after checking local changes. Read LAB_HANDOFF.md. Detect this computer's OS and LAN IP, prepare its Python environment, and run the offline checks. Preserve local calibration, recordings and other changes.
 
-First run the real Quest receiver with --pose-report --gripper-mode stick and synthetic cameras. On the Windows lab PC, use Start-QuestSimulator.ps1 on bm2roar and give me the printed address and simulator PIN. On another OS, use the receiver's printed pairing URL. Wait for me to open it in Meta Quest Browser and select Start Quest. Guide me through the released-hand, clutch, wrist rotation, jaw retention, and A start/stop checks. Record a trial and verify it with replay.py and trial_metrics.py. Report the observed controller profile, receipt timing, IK rejections, and simulated tracking error.
+First run the real Quest receiver with --pose-report --gripper-mode stick and synthetic cameras. On Windows, use Start-QuestSimulator.ps1 and give me the printed address and simulator PIN. It defaults to bm2roar. If we're on another Wi-Fi, select its active Windows network profile with -NetworkName or its local IPv4 address with -LabIP. On another OS, use the receiver's printed pairing URL. Wait for me to open it in Meta Quest Browser and select Start Quest. Guide me through the released-hand, clutch, wrist rotation, jaw retention, and A start/stop checks. Record a trial and verify it with replay.py and trial_metrics.py. Report the observed controller profile, receipt timing, IK rejections, and simulated tracking error.
 
 Next help me test one physical J8 gripper on the Mac. Start with read-only USB discovery and encoder feedback. Use the lab's verified adapter side, J8 encoder limits, measured open/close test angles, and test speed. Ask me for any missing measurements. Run the read-only gripper bench and compare requested and measured encoder degrees. Before physical motion, wait for my on-site go-ahead. I will run the --execute-gripper command and type the local confirmation myself. Keep J1–J7 out of the test. Help me record and verify a small opening, closing, and hold. At the end, give me the episode IDs, results, and anything still unverified. Keep hardware IDs and trials local.
 ```
 
 ## 1. Prepare a fresh checkout
 
-Sign in to GitHub on the lab computer with an account that can read the private repository. From a parent directory run:
+Sign in to GitHub on the lab computer with an account that can read the private repository. A new labmate can clone it after accepting the owner's invitation. [Private repository sharing instructions](README.md#share-this-private-repository-with-a-labmate)
+
+From a parent directory, clone the repository and enter its folder.
 
 ```sh
 git clone https://github.com/xzhu399-dotcom/openarm-quest-teleop.git
@@ -45,6 +47,8 @@ The receiver needs Python 3.9+ and OpenSSL for its default local HTTPS certifica
 ## 2. Real Quest, simulated arms
 
 ### Reconnect on the Windows lab PC
+
+For another Wi-Fi network, follow the steps to select the new profile or the PC's active IPv4 address. [Use a different Wi-Fi network](README.md#use-a-different-wi-fi-network)
 
 1. Connect the PC and the headset to **bm2roar**. Open PowerShell in the checkout and run the [Windows launcher](Start-QuestSimulator.ps1). Leave its terminal open during collection.
 
@@ -89,6 +93,7 @@ To check headset reachability, open a fresh Quest Browser tab and enter just `ht
 | Arm and wrist | Hold the right side grip, move the right handle a few centimetres, then turn your wrist in place. Release, reposition and re-clutch. | The right target follows reachable movement and rotation. The left arm holds. Re-clutching starts from the existing tool pose. |
 | Tracking recovery | While squeezing the right side grip, briefly move that controller out of tracking, then bring it back and move a few centimetres. | The arm stays in place during tracking loss. Once the controller is tracked again, **Grip engaged** returns and the new hand movement drives the arm from its last pose. |
 | Gripper | Begin with the stick centered. While clutched, tilt the right stick down briefly, center it, and move the handle again. Tilt up to reopen. | The simulated aperture in mm decreases, holds during arm movement, and increases when requested. |
+| Return home during collection | Release both side grips. Press **right A** and **left X** together, then release both. | Both arms return to their simulator startup poses. The jaw openings and camera selection stay fixed, and the same trial keeps recording. |
 | Save | Release both grips and tap **right A** again. | The terminal reports `Recording STOP`, a saved result and the episode ID. The arms remain at the poses where you released the grips. |
 
 From a second terminal in the same checkout and Python environment, substitute the reported ID:

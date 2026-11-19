@@ -45,7 +45,7 @@
           <p id="reach-help" class="pickup" role="status" hidden></p>
           <p id="pickup-help" class="pickup" hidden></p>
         </div>
-        <div class="controls-row"><button id="capture">Capture initial pose</button><button id="clutch" disabled>Hold side grip</button><label for="trigger" id="jaw-control-label">Index trigger</label><input id="trigger" type="range" min="0" max="100" value="0" disabled><output id="trigger-value" for="trigger">0%</output></div>
+        <div class="controls-row"><button id="capture">Capture initial pose</button><button id="restore_initial" disabled>Return arms to home</button><button id="clutch" disabled>Hold side grip</button><label for="trigger" id="jaw-control-label">Index trigger</label><input id="trigger" type="range" min="0" max="100" value="0" disabled><output id="trigger-value" for="trigger">0%</output></div>
         <div class="controller-tools"><div class="buttons"><button id="face-a" disabled><b>A</b> Record</button><button id="face-b" disabled><b>B</b> Hold</button></div><span>Right controller buttons</span></div>
       </section>
       <aside class="stack">
@@ -53,7 +53,7 @@
           <div class="panel-heading"><h2>Episode</h2><span id="rec-state" class="pill">Idle</span></div>
           <div class="episode-body"><div class="timer" id="timer">00:00.0</div><div class="buttons"><button id="record" class="primary">Start recording</button><button id="finish_return" hidden>Save &amp; return</button><button id="mark" disabled>Add marker</button></div>
             <p id="trial-status" role="status" hidden></p>
-            <p class="minor">A starts or saves the trial in place.<span id="return-help"> To save and return the simulated arms to their trial-start pose, release both grips, hold the left stick click and tap A.</span></p>
+            <p class="minor">Tap A to start or save a trial.<span id="home-help" hidden> Release both grips and press right A and left X together to return the arms to their startup pose.</span><span id="return-help"> To save and return the simulated arms to their trial-start pose, release both grips, hold the left stick click and tap A.</span></p>
             <p id="episode-file" class="minor" hidden></p><p id="rec-error" class="notice" role="alert" hidden></p></div>
         </section>
         <section class="panel camera">

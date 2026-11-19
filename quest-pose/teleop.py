@@ -132,7 +132,7 @@ def parse_sample(data):
         raise ValueError("expected up to 64 button events")
     clean_events = []
     for event in events:
-        if not isinstance(event, dict) or event.get("action") not in ("record", "finish_return", "hold", "view", "mark"):
+        if not isinstance(event, dict) or event.get("action") not in ("record", "finish_return", "restore_initial", "hold", "view", "mark"):
             raise ValueError("invalid button event")
         clean_events.append({"id": integer(event.get("id"), "event ID", 1), "action": event["action"]})
     return {"session": session, "seq": integer(data.get("seq"), "sequence"),
@@ -280,6 +280,7 @@ class Teleop:
         self.reason = ""
         self.ack = 0
         self.hands = {side: Hand(side) for side in SIDES}
+        self.initial_joints = {side: list(hand.robot.angles) for side, hand in self.hands.items()}
 
     def _hold(self, reason):
         self.trial.cancel(reason)
@@ -413,6 +414,15 @@ class Teleop:
             self.release_controls()
         blocked = self.reason if self.held else ""
         self.trial.finish(self.hands, self.session, return_requested, blocked)
+
+    def restore_initial(self, now=None):
+        now = time.monotonic() if now is None else now
+        self._expire(now)
+        blocked = self.reason if self.held else ""
+        if not self.visible or self.head is None:
+            blocked = blocked or "Start a tracked input session before restoring the arms."
+        self.trial.restore_initial(self.hands, self.initial_joints, blocked)
+        return self.snapshot(now)
 
     def hold(self, reason="operator hold", now=None):
         if not self.grip_only:

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "arms": {
+    "left": {
+      "serial": "REPLACELEFTSERIAL",
+      "limits_deg": {},
+      "poses": {}
+    },
+    "right": {
+      "serial": "REPLACERIGHTSERIAL",
+      "limits_deg": {},
+      "poses": {}
+    }
+  }
+}

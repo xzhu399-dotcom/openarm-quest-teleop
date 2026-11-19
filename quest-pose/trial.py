@@ -1,0 +1,89 @@
+"""Trial-start joints and an interruptible joint-space return in simulation."""
+
+import math
+
+
+class Trial:
+    def __init__(self):
+        self.start = None
+        self.session = None
+        self.required = set()
+        self.path = None
+        self.result = {"status": "idle", "reason": ""}
+
+    def begin(self, hands, session):
+        self.path = None
+        self.result = {"status": "idle", "reason": ""}
+        self.start = {s: list(h.robot.angles) for s, h in hands.items()}
+        self.session = session
+        self.required = {s for s, h in hands.items() if h.usable}
+        return {"joints_rad": self.start, "closure": {s: h.closure for s, h in hands.items()}}
+
+    def observe(self, hands, session):
+        if self.start is not None:
+            if self.session is None:
+                self.session = session
+            self.required.update(s for s, h in hands.items() if h.usable)
+
+    @staticmethod
+    def _input_problem(hands, required):
+        if not required or any(not hands[s].usable for s in required):
+            return "Tracking is required for every controller used in this trial."
+        if any(h.grip_engaged for h in hands.values()):
+            return "Both side grips must remain released for a return."
+        return ""
+
+    def finish(self, hands, session, return_requested, held_reason):
+        target, self.start = self.start, None
+        self.path = None
+        if not return_requested:
+            self.result = {"status": "stayed", "reason": "Arms and jaw openings held at the trial endpoint."}
+            return
+        problem = held_reason or self._input_problem(hands, self.required)
+        if not problem and (target is None or self.session != session):
+            problem = "The trial-start joints belong to a different input session."
+        if problem:
+            self.result = {"status": "skipped", "reason": problem}
+            return
+        origin = {s: list(h.robot.angles) for s, h in hands.items()}
+        distance = max(abs(a-b) for s in hands for a,b in zip(origin[s], target[s]))
+        if distance < 1e-12:
+            self.result = {"status": "completed", "reason": "Arms are at the trial-start joints."}
+            return
+        # Quintic interpolation stays inside the convex box of per-joint limits;
+        # peak speed is 1.875 * distance / duration. Jaws are held independently.
+        duration = max(0.6, 1.875 * distance / math.radians(30))
+        source = {s: self._source(hands[s]) for s in self.required}
+        self.path = {"origin":origin, "target":target, "duration":duration, "elapsed":0., "source":source}
+        self.result = {"status":"returning", "reason":"Returning simulated joints; jaw openings are held."}
+
+    @staticmethod
+    def _source(hand):
+        return tuple(hand.raw[k] for k in ("profile", "source", "grip_epoch"))
+
+    def cancel(self, reason):
+        if self.path is not None:
+            self.path = None
+            self.result = {"status":"cancelled", "reason":reason}
+
+    def advance(self, hands, dt):
+        path = self.path
+        problem = self._input_problem(hands, self.required)
+        if not problem and any(self._source(hands[s]) != key for s,key in path["source"].items()):
+            problem = "A controller changed or its grip was operated during return."
+        if problem:
+            self.cancel(problem)
+            return
+        path["elapsed"] = min(path["duration"], path["elapsed"] + dt)
+        t = path["elapsed"] / path["duration"]
+        blend = min(1., t*t*t * (10 - 15*t + 6*t*t))
+        for side, hand in hands.items():
+            a, b = path["origin"][side], path["target"][side]
+            if a == b:
+                continue
+            angles = list(b) if t == 1 else [x+(y-x)*blend for x,y in zip(a,b)]
+            hand.robot.set_joints(angles)
+            hand.tool = hand.robot.tcp
+        if t == 1:
+            self.path = None
+            self.result = {"status": "completed", "reason": "Trial-start joints reached. Jaw openings held."}

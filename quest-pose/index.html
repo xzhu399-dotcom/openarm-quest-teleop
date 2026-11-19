@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102725">
+  <title>OpenArm · Teleoperation studio</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand"><span class="brand-symbol" aria-hidden="true">⌁</span> OpenArm <span class="division">/</span> <span class="brand-page">Teleoperation studio</span></div>
+    <span class="sim-label"><i></i> Simulation</span>
+  </header>
+  <main>
+    <div class="title-row">
+      <div><h1>Robot simulator</h1><p>Drive the simulated OpenArm with a Quest controller or a mouse.</p></div>
+      <div class="buttons input-buttons">
+        <button class="primary" id="mouse-start">Simulate Quest with mouse</button>
+        <button id="xr-start" disabled title="Open the HTTPS page in the Quest browser">Start Quest</button>
+        <button id="stop" hidden>Disconnect input</button>
+      </div>
+    </div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div class="workspace">
+      <section class="panel motion">
+        <div class="panel-heading">
+          <div><h2>Robot workspace</h2><span id="source-label" class="sub">Waiting for input</span></div>
+          <div class="segmented" aria-label="Inspect hand"><button id="left-tab" aria-pressed="false">Left</button><button id="right-tab" aria-pressed="true">Right</button></div>
+        </div>
+        <div class="scene">
+          <div class="scene-labels"><span>OpenArm v1 <small>Nominal kinematics</small></span><span id="handle-label">Right Quest handle</span></div>
+          <canvas id="pad" tabindex="0" aria-label="Virtual Quest controller pad. Right-drag to drive the simulated robot. Choose Move, Rotate or Gripper below."></canvas>
+          <span class="jaw-detail-label">Gripper detail</span>
+          <div class="scene-foot"><span>Grid <b>10 cm</b></span><span id="clutch-state">Grip released</span></div>
+        </div>
+        <div class="telemetry-strip">
+          <div><small>Jaw opening</small><strong id="jaw-opening">—</strong></div>
+          <div><small>Wrist orientation</small><span id="wrist-rotation">—</span></div>
+        </div>
+        <div class="motion-help">
+          <div class="mouse-modes"><strong>Mouse control</strong><div class="segmented" role="group" aria-label="Mouse control mode"><button id="mode-move" aria-pressed="true">Move</button><button id="mode-rotate" aria-pressed="false">Rotate</button><button id="mode-gripper" aria-pressed="false">Gripper</button></div></div>
+          <p id="mode-help">Right-drag to clutch and move the arm. Scroll while holding the right button to control depth. Left-drag to reposition the released handle.</p>
+          <p id="reach-help" class="pickup" role="status" hidden></p>
+          <p id="pickup-help" class="pickup" hidden></p>
+        </div>
+        <div class="controls-row"><button id="capture">Capture initial pose</button><button id="clutch" disabled>Hold side grip</button><label for="trigger" id="jaw-control-label">Index trigger</label><input id="trigger" type="range" min="0" max="100" value="0" disabled><output id="trigger-value" for="trigger">0%</output></div>
+        <div class="controller-tools"><div class="buttons"><button id="face-a" disabled><b>A</b> Record</button><button id="face-b" disabled><b>B</b> Hold</button></div><span>Right controller buttons</span></div>
+      </section>
+      <aside class="stack">
+        <section class="panel episode">
+          <div class="panel-heading"><h2>Episode</h2><span id="rec-state" class="pill">Idle</span></div>
+          <div class="episode-body"><div class="timer" id="timer">00:00.0</div><div class="buttons"><button id="record" class="primary">Start recording</button><button id="finish_return" hidden>Save &amp; return</button><button id="mark" disabled>Add marker</button></div>
+            <p id="trial-status" role="status" hidden></p>
+            <p class="minor">A starts or saves the trial in place. To save and return the simulated arms to their trial-start pose, release both grips, hold the left stick click and tap A.</p>
+            <p id="episode-file" class="minor" hidden></p><p id="rec-error" class="notice" role="alert" hidden></p></div>
+        </section>
+        <section class="panel camera">
+          <div class="panel-heading"><h2>Camera preview</h2><button class="text-button" id="view">Switch view</button></div>
+          <div class="camera-picture"><canvas id="camera-frame" width="320" height="180" aria-label="Selected workstation camera feed"></canvas></div>
+          <div class="camera-caption"><strong id="camera-name">Waiting for frame</strong><span id="camera-age">—</span></div>
+        </section>
+        <section class="panel safety">
+          <div><h2>Software hold</h2><p id="hold-state">Waiting for receiver</p></div>
+          <div class="buttons"><button id="hold">Hold</button><button id="resume" hidden>Resume</button></div>
+        </section>
+      </aside>
+      <section class="panel inspector">
+        <div class="panel-heading"><div><h2>Pose inspector</h2><span id="inspect-label" class="sub">Right hand</span></div><span class="pill" id="timing">No samples</span></div>
+        <div class="table-wrap"><table><thead><tr><th scope="col">Reference</th><th scope="col">X <small>m</small></th><th scope="col">Y <small>m</small></th><th scope="col">Z <small>m</small></th><th scope="col">Quaternion <small>XYZW</small></th></tr></thead><tbody id="pose-table"></tbody></table></div>
+        <div id="robot-joints" class="inputs"></div>
+        <div id="inputs" class="inputs"></div>
+        <details><summary>Raw tracking and button data</summary><pre id="raw">Waiting for input</pre></details>
+      </section>
+    </div>
+  </main>
+  <canvas id="xr-canvas" hidden></canvas>
+</body>
+</html>

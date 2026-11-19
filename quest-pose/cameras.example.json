@@ -1,0 +1,10 @@
+﻿{
+  "width": 640,
+  "height": 480,
+  "fps": 15,
+  "cameras": {
+    "overview":    {"label": "Overview",    "device": 0},
+    "left_wrist":  {"label": "Left wrist",  "device": 1},
+    "right_wrist": {"label": "Right wrist", "device": 2}
+  }
+}

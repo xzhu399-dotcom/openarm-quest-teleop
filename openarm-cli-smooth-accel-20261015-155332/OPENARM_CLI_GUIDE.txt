@@ -1,0 +1,193 @@
+OpenArm 纯命令行测试
+
+入口：openarm_cli.py（不会创建网页）
+配置与姿态：openarm_cli_config.json
+
+请在本机的 openarm_cli_config.json 中填写对应的 CANable 序列号。下方为占位符。
+  left  左臂：<LEFT_ADAPTER_SERIAL>
+  right 右臂：<RIGHT_ADAPTER_SERIAL>
+可同时插上两块 CANable，电脑 USB 插口和枚举顺序不影响选择。
+找不到指定序列号或发现重复序列号时拒绝继续，绝不改选另一块。
+绑定跟随 CANable；交换 CANable 与机械臂之间的 CAN 线后必须重新核对。
+console 支持 --arm both 同时保持双臂；其他命令一次只操作一侧。
+请退出旧控制脚本和其他 CAN 查询程序。
+
+在终端进入目录
+  cd "/你解压后的目录/openarm-cli-smooth-accel-日期时间"
+
+推荐：持续控制台（换手臂/关节不用退出，全部参与电机持续保持）
+
+先预览，不连接 USB：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm both console --speed 0.5
+
+双臂 16 个电机全部通电保持当前位置，进入同一个终端控制台：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm both console --speed 0.5 --execute
+
+单独提高 8 号手部关节速度，例如 J1–J7 为 0.5°/s，两侧 J8 为 10°/s：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm both console --speed 0.5 --hand-speed 10 --execute
+--hand-speed 可选 0.1–10°/s；默认 J8 为 10°/s。console 的 --speed 默认 5°/s。
+10°/s 是本测试程序的上限，不是已经验证过的机械安全速度或电机额定值。
+提高参考速度后先短按确认手部的运动与方向；之前瞬时超速的根本原因仍未确定。
+
+本次默认设置：J1–J7 最高参考速度 5°/s，J8 最高参考速度 10°/s。
+预览（不连接 USB）：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm both console
+之后由你手动启动：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm both console --speed 5 --hand-speed 10 --execute
+A/D 与独立 jog 从零加速：J1–J7 加速度 2.5°/s²，J8 为 5°/s²。
+持续输入约 2 秒达到各自最高参考速度；可用 +/- 降低速度。
+这是目标位置轨迹的加速约束，不保证反馈速度/加速度严格等于指令。
+松键超时、空格/S、切换关节时立即停止推进目标，不增加减速滑行距离。
+反向时丢弃旧速度，从零向新方向加速；恢复按键也重新加速。
+姿态回放采用五次曲线，参考速度不超过设定值，加速度上限 2.5°/s²。
+控制台恢复回放或修改姿态速度时，从当前目标重新起步；短动作可能达不到最高速度。
+3° 跟踪误差保护、速度保护、500 ms 通信超时和 200 ms 周期保护仍保留。
+
+只接一侧时，可将 both 换成 left 或 right，该侧 8 个电机全部保持。
+只运行单侧控制台时，另一侧不受该程序控制。
+程序按绑定序列号连接，both 必须两块适配器、两侧各 8 个电机全部可读。
+所有模式、状态和当前角度检查通过后才会使能；不会将没响应的电机静默跳过。
+
+控制台快捷键（无需按回车，回放继续操作除外）：
+  L / R     选择左 / 右臂
+  1–8       选择电机；例如 R 再按 4，选中右臂 J4
+  A / D     正反向，仍采用 180 ms 按键重复续期
+  + / -     调速 0.1°/s；J1–J7 为 0.1–5，J8 为 0.1–10°/s
+  空格 / S  取消当前动作，全部电机保持最后目标
+  P         暂停回放（保持）；回车继续
+  Z         将当前选中臂记录为 vertical（竖直姿态）
+  X         将当前选中臂记录为 forearm-raised（小臂抬起姿态）
+  V         回到当前臂已记录的 vertical
+  F         到当前臂已记录的 forearm-raised
+  B         当前臂执行 vertical → forearm-raised
+  H         帮助
+  Q / Esc / Ctrl+C  结束，全部参与电机失能
+
+切换选择时停止原运动，保持所有关节最后的目标；不会让原电机松力。
+切换后必须先松开 A/D，等按键续期结束，再重新按，避免误动新关节。
+未选中关节、另一侧手臂和夹爪也会持续收到位置保持命令。
+选中 J8 按 +/- 只改变当前侧的手部速度；左右手的速度分别记忆。
+切回 J1–J7 时恢复机械臂的速度设置，姿态回放也始终使用机械臂速度。
+姿态回放只改变当前臂 1–7 号关节，8 号夹爪与另一侧保持原目标。
+动作完成、暂停、按空格、切换关节或保存姿态，都不会失能。
+任何参与关节的控制故障会结束整个会话，尝试停止双臂全部参与关节。
+
+控制台内教学：
+  逐个选择关节，用 A/D 调整到竖直；按空格，等待至少 0.5 秒稳定，再按 Z。
+  再逐个调整到小臂抬起姿态；按空格，等待稳定，再按 X。
+  按 R 切到右臂，单独教一遍右臂；不要直接复制左臂角度。
+  已有同名姿态时会提示 5 秒内按 Y 确认覆盖，空格取消。
+  保存在后台进行，不会因为磁盘写入而中断电机保持；以“已保存”提示为准。
+  通电保持期间不要硬掰关节，用 A/D 教学即可。
+
+“锁死”的实现是位置闭环保持，不是机械制动器，也不能保证外力下完全不动。
+为使用电机内部位置环，console 要求所有参与电机已处于位置＋速度模式 2。
+若某个电机处于 MIT 或其他模式，程序会明确报出手臂和编号，不自动改模式/PID。
+预备期间仍需支撑；运行异常、急停或 Q 退出会松力，退出前支撑好机械臂。
+
+以下是原有的独立命令。需要始终保持其他电机时，请使用上面的 console，
+不要使用独立 jog：独立 jog 仍只使能选中的一个电机。
+
+1. 只读检查左右臂
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left status
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm right status
+显示 J1–J8 的编码器角度、速度、温度、状态和模式。状态 0 表示失能。
+这些角度不是自动标定后的 URDF 关节角度；A 是编码器角度增加，D 是减少。
+
+2. 单关节测试
+先预览（没有 --execute 就不会访问 USB）：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left jog --joint 4 --speed 0.5
+
+确认关节编号、支撑和运动空间后，由你手动启动：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left jog --joint 4 --speed 0.5 --execute
+
+右臂示例（仅换手臂和电机编号，不假设 J4 就是肘关节）：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm right jog --joint 2 --speed 1 --execute
+
+  --joint 1–8：选择单个电机；其他电机不受控。
+  --speed：参考速度，单位 °/s；默认 1。J1–J7 可选 0.1–5，J8 可选 0.1–10。
+  运行时 + / - 每次调 0.1°/s。
+  按 A 正向，D 反向；空格或 S 停止增加目标，保持最后目标角度。
+  Q、Esc、Ctrl+C：退出，尝试失能并确认反馈。退出前支撑好机械臂。
+
+标准终端没有按键松开通知。本程序使用操作系统按键重复续期：
+每次 A/D 输入只在 180 ms 内有效，之后自动停止增加目标。
+松键检测最长约 180 ms 加一个控制周期；不是硬件立即停止。
+第一次长按时，系统重复延迟可能导致短暂停顿，之后会随重复输入继续转动。
+若长按不连续，请检查 macOS 的按键重复设置，或重复短按 A/D；不要把按键锁存为一直运动。
+终端箭头键也包含 Esc，可能结束会话。
+
+默认不再设起点 ±2° / ±10° 等人工小窗口；仍会限制在编码范围及已配置机械限位内。
+需要临时小范围时可以追加 --range-deg 15（相对开始位置 ±15°）。
+配置中的 limits_deg 目前留空，因为实际零位与机械边界尚未标定。
+编码范围不是机械可转范围，尤其 8 号夹爪不要按整圈旋转处理。
+可在对应 arm 的 limits_deg 中按编码器角度填写，例如格式：
+  "关节编号": [最小角度, 最大角度]
+数字必须来自实测，不提供可能不适用于当前装配的示例限位。
+
+3. 记录“竖直默认位置”
+先把整条手臂支撑稳固、各关节失能，手动摆到你定义的竖直姿态。
+不要在关节保持使能时硬掰。若传动无法轻松手动移动，可用单关节测试慢慢调整，
+支撑到位后退出，再记录。记录操作本身不使能、不设置电机零点、不写 Flash。
+
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left record --name vertical
+
+记录的是本臂 1–7 号关节的当前编码器角度。程序会检查失能和短时间静止状态。
+右臂必须单独摆好并单独记录：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm right record --name vertical
+
+4. 记录“抬起小臂”
+支撑好手臂，把它调整到希望的小臂抬起姿态，然后分别记录：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left record --name forearm-raised
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm right record --name forearm-raised
+
+不要把左臂的角度直接复制给右臂，也不要假设同一编号正转的空间方向相同。
+若要让抬小臂动作只改变一个关节，教学时保持其他关节与竖直姿态相同。
+重新记录同名姿态需追加 --replace，以免误覆盖。
+支持其他自定义英文姿态名，记录方法相同。
+
+查看已记录角度（不连接 USB）：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left poses
+
+5. 回放姿态或动作
+先预览完整目标序列及各关节角度：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left play vertical forearm-raised --speed 1
+
+由当前位置缓慢到竖直，然后抬起小臂：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left play vertical forearm-raised --speed 1 --execute
+
+只返回已记录的竖直位置：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm left play vertical --speed 1 --execute
+
+竖直 → 抬起小臂 → 竖直：
+  .venv-can-diagnostics/bin/python openarm_cli.py --arm right play vertical forearm-raised vertical --speed 1 --execute
+
+回放同时控制本臂 1–7 号关节，8 号夹爪不参与。
+关节采用同步平滑插值，各关节参考速度不超过 --speed。
+这不是末端直线运动，也不包含碰撞规划；两个安全端点之间仍可能有碰撞或线束干涉。
+空格/S 暂停并保持最后目标；回车继续。Q/Esc/Ctrl+C 退出并失能。
+动作完成后保持末端姿态，不自动松力；支撑好机械臂后按 Q 退出。
+没有默认预填角度，也不会把电机 0° 当作竖直位置。
+重新上电后先核对编码器位置；设置过零点、换电机或改变装配后应重新记录姿态。
+程序会拒绝回放序列号、控制模式或反馈映射参数已改变的姿态，但无法自动识别所有零位变化。
+
+6. 保护与实际限制
+默认不执行，只有 console/jog/play 加 --execute 才会使能。
+运行时临时设置 500 ms 通信超时；确认失能后恢复原值，不保存到 Flash。
+按原有 MIT 或位置速度模式控制，不自动切换模式、不调整电机内部 PID。
+MIT 使用 kp=5、kd=0.5 并在开始时渐增；不保证能承受整臂重力。
+本程序没有重力补偿：单关节测试、教学和退出时都需要机械支撑。
+速度命令不是硬件实际速度保证；保留反馈超速、3° 跟踪误差、60°C、通信/周期超时保护。
+每个关节的反馈超速阈值为 max(5, 2×该关节参考速度)°/s，再加一档反馈量化容差。
+提高 J8 速度只改变 J8 的速度指令、轨迹步长和速度保护阈值，不会放宽 J1–J7 的保护。
+温度、位置跟踪误差、200 ms 控制周期及 500 ms 通信超时保护保持不变。
+出现急冲、失能未确认或失控迹象时使用物理急停。USB 断开会使软件失能指令无法送达。
+回放与大范围运行只经过离线模拟验证，实际机械安全范围仍需由你确认。
+
+日志保存于 motor-test-logs，包含原始 CAN 报文、左右臂绑定、目标与异常清理结果。
+程序提供同一序列号的会话锁，但旧脚本和外部程序不受此锁约束，勿同时运行。
+
+协议参考（沿用之前单电机验证过的实现）：
+  https://github.com/enactic/openarm_can
+  https://damiao.enactic.ai/products/hardware/dm-j4340p-2ec-v1.0/
+  https://wiki.seeedstudio.com/cn/damiao_series/

@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "status": "saved",
+  "simulated": true,
+  "task": "",
+  "outcome": "unreviewed",
+  "started_utc": "2026-11-19T01:12:06.051467+00:00",
+  "start_host_ns": 3526828000000,
+  "clock": "time.monotonic_ns",
+  "input_clock": "browser performance.now() in ms",
+  "camera_clock": "synthetic capture uses the host clock (offset 0 ns)",
+  "input_clock_offset_estimate_s": {
+    "b78bbafa2cb698e0e86fd322a36825cf": 3526.6681
+  },
+  "input_clock_note": "Per-session minimum of host arrival seconds minus browser sample seconds; includes minimum transport delay.",
+  "units": {
+    "position": "metre",
+    "orientation": "quaternion XYZW",
+    "closure": "normalized"
+  },
+  "calibration": "synthetic-identity-v1",
+  "model": "TCP marker with ideal pose feedback",
+  "streams": {
+    "input": "input.jsonl",
+    "actions": "actions.jsonl",
+    "feedback": "feedback.jsonl",
+    "events": "events.jsonl"
+  },
+  "cameras": {
+    "overview": {
+      "label": "Overview",
+      "source": "synthetic",
+      "device_id": null,
+      "video": "overview.png",
+      "format": "APNG",
+      "timestamps": "overview.frames.jsonl",
+      "width": 320,
+      "height": 180,
+      "nominal_fps": 8,
+      "frames": 21,
+      "dropped_frames": 0
+    },
+    "left_wrist": {
+      "label": "Left wrist",
+      "source": "synthetic",
+      "device_id": null,
+      "video": "left_wrist.png",
+      "format": "APNG",
+      "timestamps": "left_wrist.frames.jsonl",
+      "width": 320,
+      "height": 180,
+      "nominal_fps": 8,
+      "frames": 21,
+      "dropped_frames": 0
+    },
+    "right_wrist": {
+      "label": "Right wrist",
+      "source": "synthetic",
+      "device_id": null,
+      "video": "right_wrist.png",
+      "format": "APNG",
+      "timestamps": "right_wrist.frames.jsonl",
+      "width": 320,
+      "height": 180,
+      "nominal_fps": 8,
+      "frames": 21,
+      "dropped_frames": 0
+    }
+  },
+  "counts": {
+    "input": 69,
+    "actions": 69,
+    "feedback": 69,
+    "events": 9
+  },
+  "dropped_input_records": 0,
+  "end_host_ns": 3529390000000,
+  "duration_s": 2.562
+}

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quest 手柄追踪</title>
+<style>
+  body { max-width: 32rem; margin: 3rem auto; padding: 0 1rem; font: 1.15rem/1.6 system-ui; }
+  button { font: inherit; padding: .6rem 1rem; }
+</style>
+<h1>Quest 手柄追踪</h1>
+<p id="status" role="status">正在检查 WebXR 支持…</p>
+<button id="start" disabled>开始追踪</button>
+<canvas hidden></canvas>
+<script type="module">
+  const status = document.querySelector('#status');
+  const start = document.querySelector('#start');
+  const sendIntervalMs = 100;
+
+  function controllerPositions(frame, viewerSpace) {
+    const positions = { left: null, right: null };
+    for (const source of frame.session.inputSources) {
+      const side = source.handedness;
+      if ((side !== 'left' && side !== 'right') || !source.gamepad || !source.gripSpace) continue;
+
+      const pose = frame.getPose(source.gripSpace, viewerSpace);
+      if (pose && !pose.emulatedPosition) {
+        const { x, y, z } = pose.transform.position;
+        positions[side] = [x, y, z];
+      }
+    }
+    return positions;
+  }
+
+  async function startTracking(mode) {
+    start.disabled = true;
+    let session;
+    let active = true;
+    try {
+      session = await navigator.xr.requestSession(mode);
+      session.addEventListener('end', () => {
+        active = false;
+        status.textContent = '追踪已结束。';
+        start.disabled = false;
+      }, { once: true });
+
+      const gl = document.querySelector('canvas').getContext('webgl', { alpha: true });
+      if (!gl) throw new Error('WebGL 不可用');
+      await gl.makeXRCompatible();
+      const layer = new XRWebGLLayer(session, gl);
+      session.updateRenderState({ baseLayer: layer });
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      status.textContent = '追踪中，请在 Mac 终端查看坐标。';
+
+      const opaque = session.environmentBlendMode === 'opaque';
+      gl.clearColor(0.04, 0.06, 0.08, opaque ? 1 : 0);
+      let lastSentAt = -Infinity;
+      let sending = false;
+
+      function onFrame(time, frame) {
+        session.requestAnimationFrame(onFrame);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        if (session.visibilityState !== 'visible' || sending || time - lastSentAt < sendIntervalMs) return;
+        const positions = controllerPositions(frame, viewerSpace);
+        lastSentAt = time;
+        sending = true;
+
+        fetch('/pose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(positions),
+          signal: AbortSignal.timeout(1500),
+        }).then(response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (active) status.textContent = '追踪中，请在 Mac 终端查看坐标。';
+        }).catch(() => {
+          if (active) status.textContent = '暂时无法发送，请检查 Mac 上的接收器和网络。';
+        }).finally(() => {
+          sending = false;
+        });
+      }
+
+      session.requestAnimationFrame(onFrame);
+    } catch (error) {
+      if (session) await session.end().catch(() => {});
+      status.textContent = `无法启动追踪。${error.message}`;
+      start.disabled = false;
+    }
+  }
+
+  async function initialize() {
+    if (!window.isSecureContext || !navigator.xr) {
+      status.textContent = '请在 Quest 浏览器中打开 Mac 终端显示的 HTTPS 地址。';
+      return;
+    }
+
+    const supported = mode => navigator.xr.isSessionSupported(mode).catch(() => false);
+    const mode = await supported('immersive-ar') ? 'immersive-ar' : 'immersive-vr';
+    if (!await supported(mode)) {
+      status.textContent = '当前浏览器不支持沉浸式 WebXR。';
+      return;
+    }
+
+    status.textContent = '拿起手柄，然后开始追踪。';
+    start.addEventListener('click', () => startTracking(mode));
+    start.disabled = false;
+  }
+
+  initialize();
+</script>
+</html>

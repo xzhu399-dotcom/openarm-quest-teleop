@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>WebXR input smoke test</title>
+<canvas id="xr-canvas" width="256" height="96" hidden></canvas>
+<pre id="result">Running synthetic WebXR session…</pre>
+<script type="module">
+import {startQuest, touchLayout} from '../xr.js';
+
+// Serve quest-pose with python -m http.server --bind 127.0.0.1 and visit
+// /tests/webxr-smoke.html. Input devices and XR session are synthetic.
+function check(condition, message) {
+  if (!condition) throw new Error(message);
+}
+function transform(x, y, z, yaw = 0) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const matrix = [c,0,-s,0, 0,1,0,0, s,0,c,0, x,y,z,1];
+  const inverse = [c,0,s,0, 0,1,0,0, -s,0,c,0, -c*x+s*z,-y,-s*x-c*z,1];
+  return {position:{x,y,z}, orientation:{x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},
+          matrix, inverse:{matrix:inverse}};
+}
+function source(side) {
+  return {handedness:side, profiles:['oculus-touch-v3'], targetRayMode:'tracked-pointer',
+    gripSpace:{transform:transform(side === 'right' ? 0.2 : -0.2, 1, -0.4)},
+    gamepad:{mapping:'xr-standard', axes:[0,0,-0.25,0.5],
+             buttons:Array.from({length:7}, () => ({pressed:false, touched:false, value:0}))}};
+}
+class Session extends EventTarget {
+  constructor(floor) {
+    super();
+    this.floor = floor;
+    this.space = new EventTarget();
+    this.visibilityState = 'visible';
+    this.inputSources = [source('left'), source('right')];
+    this.refs = [];
+  }
+  updateRenderState(state) { this.renderState = state; }
+  async requestReferenceSpace(name) {
+    this.refs.push(name);
+    if (name === 'local-floor' && !this.floor) throw new Error('local-floor unavailable');
+    check(name === 'local' || name === 'local-floor', 'nonstationary tracking reference');
+    return this.space;
+  }
+  requestAnimationFrame(fn) { this.nextFrame = fn; }
+  async end() { this.dispatchEvent(new Event('end')); }
+  frame(time, yaw = 0) {
+    const head = transform(0, 1.6, 0, yaw);
+    const projectionMatrix = [1,0,0,0, 0,1,0,0, 0,0,.5,0, 0,0,0,1];
+    const views = ['left','right'].map(eye => ({eye, projectionMatrix, transform:head}));
+    const verifySpace = ref => check(ref === this.space, 'head and grip reference spaces disagree');
+    this.nextFrame(time, {session:this,
+      getViewerPose:ref => { verifySpace(ref); return {transform:head, views}; },
+      getPose:(grip, ref) => {
+        verifySpace(ref);
+        check(this.inputSources.some(s => s.gripSpace === grip), 'unexpected gripSpace');
+        return grip;
+      }});
+  }
+}
+
+async function run() {
+  const gl = document.getElementById('xr-canvas').getContext('webgl');
+  check(gl, 'browser needs WebGL for this test');
+  gl.makeXRCompatible = async () => {};
+  let session;
+  Object.defineProperty(navigator, 'xr', {value:{
+    async requestSession(mode, options) {
+      check(mode === 'immersive-vr' && options.optionalFeatures.includes('local-floor'), 'session options');
+      return session;
+    }
+  }});
+  Object.defineProperty(window, 'XRWebGLLayer', {value:class {
+    constructor(activeSession, context) {
+      check(activeSession === session && context === gl, 'XR WebGL layer binding');
+      this.framebuffer = null;
+    }
+    getViewport(view) { return {x:view.eye === 'left' ? 0 : 128, y:0, width:128, height:96}; }
+  }});
+  const image = document.createElement('canvas');
+  image.width = 96; image.height = 64;
+  const ctx = image.getContext('2d');
+  ctx.fillStyle = '#ed2832';
+  ctx.fillRect(0, 0, image.width, image.height);
+  const preview = () => ({image, info:{camera:'Overview', index:1, status:'Live', stale:false, ageBucket:0}});
+  for (const floor of [true, false]) {
+    session = new Session(floor);
+    const frameName = floor ? 'local-floor' : 'local';
+    const samples = [];
+    let started = '', displays = 0, resets = 0, inactive = 0, ended = 0;
+    await startQuest('immersive-vr', {
+      onStart:name => { started = name; }, onSample:s => samples.push(s),
+      onReset:() => resets++, onInactive:() => inactive++, onEnd:() => ended++,
+      onDisplay:() => displays++, preview
+    });
+    check(started === frameName && session.refs.join(',') === (floor ? 'local-floor' : 'local-floor,local'),
+          'stationary frame or fallback');
+    const [left, right] = session.inputSources;
+    session.frame(100);
+    for (const x of [64,192]) {
+      const pixel = new Uint8Array(4);
+      gl.readPixels(x, 48, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      check(pixel[0] > 210 && pixel[1] < 70, 'preview texture missing from eye at x=' + x);
+    }
+    right.gamepad.buttons[0] = {pressed:true, touched:true, value:0.8};
+    right.gamepad.buttons[1] = {pressed:true, touched:true, value:1};
+    right.gamepad.buttons[4] = {pressed:true, touched:true, value:1};
+    session.frame(120);
+    session.frame(140, 0.5);
+    const atGrip = samples[1], afterHeadTurn = samples[2];
+    check(JSON.stringify(atGrip.hands.right.pose) === JSON.stringify(afterHeadTurn.hands.right.pose),
+          'head motion moved the stationary handle');
+    check(afterHeadTurn.head.q[1] > 0.2 && afterHeadTurn.time_ms === 140, 'head pose or timestamp missing');
+    const r = afterHeadTurn.hands.right;
+    check(r.profile === 'oculus-touch-v3' && r.handedness === 'right' && r.mapping === 'xr-standard',
+          'source metadata');
+    check(r.buttons[0].value === 0.8 && r.buttons[1].pressed && r.buttons[4].touched && r.axes[2] === -0.25,
+          'raw gamepad');
+    check(touchLayout(r.profile, 'right')[4] === 'A' && touchLayout(r.profile, 'left')[4] === 'X',
+          'handed button names');
+    right.gripSpace.transform = transform(0.3, 1, -0.4, 0.2);
+    left.gripSpace.emulatedPosition = true;
+    session.frame(160);
+    check(samples[3].hands.left.pose === null && samples[3].hands.right.pose.p[0] === 0.3,
+          'independent grip tracking');
+    session.inputSources = [right];
+    session.frame(180);
+    check(samples[4].hands.left === null && displays === 5, 'missing controller or display acknowledgement');
+    session.space.dispatchEvent(new Event('reset'));
+    session.visibilityState = 'hidden';
+    session.dispatchEvent(new Event('visibilitychange'));
+    session.frame(200);
+    check(resets === 1 && inactive === 1 && samples.length === 5, 'reset/hidden lifecycle');
+    await session.end();
+    check(ended === 1 && gl.getError() === gl.NO_ERROR, 'session cleanup or WebGL error');
+  }
+}
+
+const result = document.getElementById('result');
+try {
+  await run();
+  result.dataset.passed = 'true';
+  result.textContent = 'PASS — synthetic WebXR, stationary frame and fallback, both eyes, controls and lifecycle.';
+} catch (error) {
+  result.dataset.passed = 'false';
+  result.textContent = String(error.stack || error);
+}
+</script>
+</html>

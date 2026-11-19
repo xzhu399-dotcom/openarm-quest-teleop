@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "session": "b78bbafa2cb698e0e86fd322a36825cf",
+  "seq": 1,
+  "source_time_ms": 148.1999999997206,
+  "source_clock": "browser performance.now()",
+  "arrival_host_ns": 3526828000000,
+  "capture_host_ns": 3526875000000,
+  "host_clock": "time.monotonic_ns",
+  "captured_utc": "2026-11-19T01:12:06.094880+00:00",
+  "frame": "mouse-local",
+  "axes": "+X right, +Y up, -Z forward",
+  "units": {
+    "p": "metre",
+    "q": "unit quaternion XYZW"
+  },
+  "orientation": "q rotates controller grip-space axes into the tracking frame",
+  "captured": [
+    "right"
+  ],
+  "initial": {
+    "right": {
+      "p": [
+        0.25,
+        1.13,
+        -0.4
+      ],
+      "q": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  }
+}

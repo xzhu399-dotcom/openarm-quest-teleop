@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+/episodes/
+/replay-frames/
+.venv*/
+venv/
+cameras.lab.json
+openarm_cli_config.json
+*.pem
+*.key
+.env
+.env.local
+.DS_Store

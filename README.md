@@ -1,6 +1,8 @@
 # OpenArm teleoperation and data collection with Meta Quest 2
 
-Use Quest Touch controllers to move a simulated OpenArm, see one of three robot-mounted cameras in the headset, and record a trial on the workstation. The recorder can use live video from your cameras. Joint positions, gripper openings and return-to-start motion come from the simulator. The supplied Mac console can drive physical motors independently. Connecting Quest motion to those motors still requires a calibrated hardware bridge.
+Use Quest Touch controllers to move a simulated OpenArm, watch a selected robot-mounted camera and record all three views. The default receiver computes arm motion, jaw opening and return-to-start in simulation. On a Mac, the optional physical bench mode connects one calibrated J8 gripper for encoder readback and supervised motion. Quest-driven physical J1–J7 motion still requires a calibrated full-arm bridge. The supplied Mac hardware console can operate independently.
+
+**Taking this to a new lab computer?** Start with the [lab handoff](LAB_HANDOFF.md) for the fresh-clone procedure, real-Quest simulation check and physical gripper bench test.
 
 ## Run at the lab
 
@@ -86,11 +88,12 @@ The default launch uses OpenSSL to generate a short-lived HTTPS certificate. If 
 | Meta Quest input and display | [quest-pose/xr.js](quest-pose/xr.js), [app.js](quest-pose/app.js), [index.html](quest-pose/index.html) | Browser code reads headset and controller poses, triggers, face buttons and thumbsticks, sends the samples, and draws the selected camera in both eyes. |
 | Quest ↔ workstation communication | [quest-pose/quest_pose_receiver.py](quest-pose/quest_pose_receiver.py), [station.py](quest-pose/station.py) | The HTTPS receiver accepts `POST /sample` and `POST /control`. The workstation sends state and the selected camera back through `GET /state` and `GET /camera`. |
 | Workstation → simulated robot | [quest-pose/teleop.py](quest-pose/teleop.py), [robot_sim.py](quest-pose/robot_sim.py), [trial.py](quest-pose/trial.py) | The station feeds controller displacement and rotation into the teleoperation engine, which computes joint positions, jaw opening and the optional trial return. |
-| Cameras, recording and review | [quest-pose/live_cameras.py](quest-pose/live_cameras.py), [recording.py](quest-pose/recording.py), [replay.py](quest-pose/replay.py) | The workstation captures and saves all three streams in `episodes/<episode-id>/`. The [examples](examples/) are replayable mouse demonstrations. |
+| Quest → physical J8 bench on the Mac | [Receiver](quest-pose/quest_pose_receiver.py) and [bench calibration template](quest-pose/gripper-bench.example.json) | The selected controller supplies the closure request. Shadow mode reads the configured gripper encoder. Execute mode adds supervised commands for that gripper. |
+| Cameras, recording and review | [Camera capture](quest-pose/live_cameras.py), [recorder](quest-pose/recording.py), [replay](quest-pose/replay.py), [trial metrics](quest-pose/trial_metrics.py) | The workstation saves trials in `episodes/<episode-id>/`. Replay verifies the streams and the metrics command summarizes timing, simulated tracking and any J8 bench readbacks. The [examples](examples/) are recorded mouse demonstrations. |
 
 ### Check the physical robot connection on the Mac
 
-Use a separate terminal in the hardware CLI folder to inspect the connected CANable adapters. This check reads USB capabilities and works with motor power off. The Quest receiver can run independently.
+Use a separate terminal in the hardware CLI folder to inspect the connected CANable adapters. This check reads USB capabilities and works with motor power off. Close tools using the selected adapter before opening it in the physical gripper bench.
 
 ```sh
 cd openarm-cli-smooth-accel-20261015-155332
@@ -101,6 +104,8 @@ test -e openarm_cli_config.json || cp openarm_cli_config.template.json openarm_c
 ```
 
 On a fresh checkout, fill in the local `openarm_cli_config.json` with the verified left/right adapter serial numbers before using the console. The template has placeholder serial numbers and empty pose and limit maps. Use the hardware guide for serial identification, console preview, calibration prerequisites and supervised motor operation. The hardware CLI uses macOS terminal facilities. [Hardware setup](openarm-cli-smooth-accel-20261015-155332/README.txt) · [OpenArm console guide](openarm-cli-smooth-accel-20261015-155332/OPENARM_CLI_GUIDE.txt)
+
+For a physical Quest/J8 trial, complete a local copy of the [bench calibration template](quest-pose/gripper-bench.example.json) with values verified on the selected gripper. Start the receiver with `--host`, `--pose-report` and `--gripper-bench FILE` for read-only shadow mode. Check the selected side, predicted target and measured encoder angle. After the shadow test passes, the lab operator can restart with `--execute-gripper` and complete the local arming procedure. Keep J1–J7 stationary throughout this test. [Bench procedure and stop checks](LAB_HANDOFF.md)
 
 ## Try the right controller with a mouse
 
@@ -172,16 +177,19 @@ The [articulated robot demonstration](examples/mouse-robot/manifest.json) uses t
 python quest-pose/replay.py examples/mouse-robot
 python quest-pose/replay.py examples/mouse-robot --at 1 --frames replay-frames
 python quest-pose/replay.py examples/mouse-robot --play
+python quest-pose/trial_metrics.py examples/mouse-robot
 ```
 
 The first command verifies and summarizes the saved streams. The second reports the poses and writes the last available frame from each camera at or before the requested time. The third prints the recorded tool trajectory at its recorded timing. For your own completed episodes, `--outcome success`, `failure` or `aborted` records the reviewed outcome in the manifest.
+
+The metrics command reports median and 95th-percentile intervals between recorded input samples, sequence gaps, per-hand simulated tool tracking errors and observed IK rejections. For bench recordings it also summarizes distinct J8 encoder readbacks in degrees.
 
 | Episode file | Contents |
 | --- | --- |
 | `manifest.json` | Simulation and calibration labels, units, clock information, outcome and dropped-record counts |
 | `input.jsonl` | Raw samples, browser monotonic time and receiver arrival timestamps |
 | `actions.jsonl` | Per-hand initial and clutch references, pose differences, simulated tool targets, closure, control state and IK outputs |
-| `feedback.jsonl` | Simulated joint angles in radians, joint origins, achieved TCP, jaw opening and fingertips in metres. Physical measurements are null |
+| `feedback.jsonl` | Simulated joint angles in radians, achieved tool pose and jaw opening. A gripper bench recording adds `physical_gripper`, including target and measured J8 angles in degrees and the host readback timestamp. |
 | `events.jsonl` | Record boundaries, markers, hold transitions, explicit captures and camera switches |
 | `overview.png`, `left_wrist.png`, `right_wrist.png` | Independently readable animated PNG camera streams |
 | `overview.mjpg`, `left_wrist.mjpg`, `right_wrist.mjpg` | Full-color device or file streams in configured OpenCV camera mode |
@@ -214,4 +222,4 @@ To repeat the separate [mock WebXR test](quest-pose/tests/webxr-smoke.html), run
 
 The supplied OpenArm CLI is in [its original directory](openarm-cli-smooth-accel-20261015-155332/README.txt). All 66 of its offline tests passed: 62 POSIX-compatible tests on Ubuntu and four mocked CANable-query tests on Windows. To run them together on the lab Mac, use the CLI archive's virtual environment, dependencies and offline test command in its README.
 
-The simulator sends no USB/CAN commands. Physical teleoperation requires confirming the arm revision, base and tool-center transforms, joint order, signs, zero offsets, mechanical limits, and measured J8 endpoints on each side. The archive's joint-limit and saved-pose maps are empty. Actual tracking, button order, headset playback, wireless timing and physical calibration need a lab check.
+Physical J1–J7 teleoperation would require confirming the arm revision, base and tool-center transforms, joint order, signs, zero offsets and mechanical limits, then commissioning a bridge to the motors. The archive's joint-limit and saved-pose maps are empty. Check controller tracking, button order, headset playback, wireless timing and physical gripper calibration on the lab rig.

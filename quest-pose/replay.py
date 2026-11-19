@@ -118,6 +118,8 @@ def inspect_episode(directory, at=None, frame_dir=None):
     when = start + int(1e9*at) if at is not None else None
     summary = {k:manifest.get(k) for k in ("status","outcome","task","simulated","model","duration_s")}
     summary["camera_mode"] = manifest.get("camera_mode","synthetic")
+    if "physical_gripper" in manifest:
+        summary["physical_gripper"] = manifest["physical_gripper"]
     summary.update(dropped_input_records=manifest.get("dropped_input_records", 0),
                    streams={}, cameras={})
     # A hard process exit retains the initial manifest. Stream contents provide the counts.

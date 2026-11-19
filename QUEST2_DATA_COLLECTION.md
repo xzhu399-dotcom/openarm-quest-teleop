@@ -2,9 +2,11 @@
 
 One trial is one episode directory. The workstation receives the Quest poses and buttons, computes simulated OpenArm joint and gripper motion, acquires the three cameras, and writes the episode. The headset and terminal follow one shared camera selection. You can practice the entire procedure using a mouse and synthetic cameras.
 
-**Hardware boundary.** USB camera capture is implemented. The robot side is the OpenArm v1 kinematic simulator. Connecting the physical arm to the same computer does not enable CAN commands or measured joint logging. With real cameras, the video is real and the joint feedback in this dataset is simulated. A physical return-to-start needs a commissioned hardware controller and calibrated joints, workspace and jaw endpoints.
+**Choose the trial mode.** The default receiver runs the OpenArm v1 kinematic simulator. With USB cameras, the episode records live video alongside simulated arm and jaw motion. On a Mac, `--gripper-bench FILE` adds read-only feedback for one calibrated physical J8. After a successful shadow test, `--execute-gripper` adds supervised motor control for that gripper. Copy and complete the [bench calibration template](quest-pose/gripper-bench.example.json) using measurements for the selected rig. The [lab handoff](LAB_HANDOFF.md) covers the setup and physical test. Full-arm physical J1–J7 motion and physical return-to-start still require calibration and a commissioned hardware bridge.
 
 ## Buttons on the Quest Touch controllers
+
+The table describes the simulated arms. For the optional J8 bench, follow the physical clutch, arming and stop checks in the lab handoff.
 
 | Operator action | Control | Result |
 | --- | --- | --- |
@@ -27,7 +29,7 @@ One trial is one episode directory. The workstation receives the Quest poses and
 - **Choose `--gripper-mode stick` for carrying an object with a relaxed thumb.** Start with the stick centered and hold the side grip. Tilt down until the opening reads 40 mm, then center the stick. Move or rotate the handle. The opening stays at 40 mm. Tilt up to open further. A small dead zone around center absorbs stick drift. The index trigger has no jaw action in this mode.
 - **Choose `--gripper-mode trigger` for direct finger control.** This is the default. In the simulated 88 mm gripper, a 50% squeeze requests a 44 mm gap. Keeping the trigger steady maintains that gap while moving. Easing off while clutched opens the jaws. To relax the trigger without opening them, release the **side grip first**, then release the trigger. When you re-clutch, the jaw waits for the trigger to reach or cross the stored closure before following it again.
 
-The displayed millimetres describe the nominal simulator geometry. They do not measure force or the gap on a physical gripper.
+The displayed millimetres describe the nominal simulator geometry. A bench recording reports the selected J8 encoder angle in degrees. To measure the actual jaw gap or grasp force, use a separate physical measurement.
 
 ## 1. Prepare the workstation and cameras
 
@@ -106,15 +108,18 @@ Run these commands from the project root using the episode directory name shown 
 ```sh
 python quest-pose/replay.py episodes/EPISODE_ID
 python quest-pose/replay.py episodes/EPISODE_ID --at 1.0 --frames replay-frames
+python quest-pose/trial_metrics.py episodes/EPISODE_ID
 python quest-pose/replay.py episodes/EPISODE_ID --outcome success
 ```
 
 The first command checks the manifest, structured streams, and all three videos and their frame tables. The second exports one PNG per camera at or before the selected time when a frame is available. The trial-ending button marks the end of collection. After reviewing a completed recording, label its outcome `success`, `failure` or `aborted`.
 
+Use the [trial metrics command](quest-pose/trial_metrics.py) to review the observed controller profiles, median and 95th-percentile receive intervals in milliseconds, sequence gaps and recorder drops. Per-hand results include simulated tool tracking error on accepted clutched targets, observed IK rejections and jaw opening range. For bench data, inspect `recorded_j8_bench` for the number of distinct encoder readings and their range in degrees. Receiver intervals describe the cadence of the recorded samples. Optical latency requires the separate measurement above.
+
 | Files in each episode | What to check |
 | --- | --- |
 | `manifest.json` | Save status, model, camera source types/IDs, frame counts, errors, drops, times and outcome |
-| `input.jsonl`, `actions.jsonl`, `feedback.jsonl` | Raw Quest input, requested targets and simulated feedback |
+| `input.jsonl`, `actions.jsonl`, `feedback.jsonl` | Raw Quest input, requested targets and simulated feedback. Bench feedback also carries a separate `physical_gripper` record with side, mode, target and measured J8 angles, and readback timestamp. |
 | `events.jsonl` | Trial boundaries, starting configuration, end choice, markers and camera switches |
 | `overview.mjpg`, `left_wrist.mjpg`, `right_wrist.mjpg` | Three independent full-color Motion JPEG streams when using devices or files. Synthetic camera recordings use animated PNGs. |
 | `*.frames.jsonl` | Stream-specific indices, host timestamps and frame offsets. Align streams by time. Device exposure times and hardware synchronization are unknown. |

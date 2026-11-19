@@ -38,7 +38,7 @@ def write_row(stream, data):
 
 
 class _Episode:
-    def __init__(self, root, task, start_ns, model, camera_config=None):
+    def __init__(self, root, task, start_ns, model, camera_config=None, physical_gripper=None):
         utc = dt.datetime.now(dt.timezone.utc)
         self.path = root / (utc.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:10])
         self.path.mkdir(parents=True)
@@ -60,6 +60,12 @@ class _Episode:
             "cameras":{}, "counts":{k:0 for k in ("input","actions","feedback","events")},
             "dropped_input_records":0,
         }
+        if physical_gripper:
+            self.manifest["physical_gripper"] = {
+                "arm": physical_gripper["arm"], "joint": "J8", "mode": physical_gripper["mode"],
+                "units": "encoder degrees", "feedback": "feedback.jsonl physical_gripper",
+                "clock": "feedback_host_ns is the host monotonic time of the latest encoder read",
+            }
         try:
             for name, file in self.manifest["streams"].items():
                 self.streams[name] = self._lines(file)
@@ -135,7 +141,10 @@ class _Episode:
                 feedback[side]["robot"] = robot
                 ik[side] = {"joint_angles_rad":robot["joint_angles_rad"], "status":robot["status"]}
         self.row("actions", {**stamp, "state":state, "ik":ik or None, "motor_commands":[]})
-        self.row("feedback", {**stamp, "simulated":True, "hands":feedback})
+        row = {**stamp, "simulated":True, "hands":feedback}
+        if state.get("gripper_bench") is not None:
+            row["physical_gripper"] = state["gripper_bench"]
+        self.row("feedback", row)
 
     def finish(self, status, outcome, dropped, error=None):
         ns = time.monotonic_ns()
@@ -248,11 +257,11 @@ class Recorder:
                 raise result
             return self.status()
 
-    def start(self, task="", host_ns=None):
+    def start(self, task="", host_ns=None, physical_gripper=None):
         now = time.monotonic_ns()
         if host_ns is not None and (type(host_ns) is not int or not 0 <= host_ns <= now):
             raise ValueError("Episode start must be a host monotonic timestamp in nanoseconds")
-        return self._sync("start", (str(task)[:250], now if host_ns is None else host_ns))
+        return self._sync("start", (str(task)[:250], now if host_ns is None else host_ns, physical_gripper))
 
     def finish(self, outcome="unreviewed"):
         if outcome not in OUTCOMES:
@@ -405,7 +414,8 @@ class Recorder:
                 if name == "start" and not ep:
                     with self._state:
                         model = next((robot["model"] for robot in self._robots.values()), "Unspecified simulation")
-                    ep = _Episode(self.root, *payload, model, self._camera_config)
+                    task, start_ns, physical_gripper = payload
+                    ep = _Episode(self.root, task, start_ns, model, self._camera_config, physical_gripper)
                     with self._state:
                         self._error, self._active, self._dropped = None, ep, 0
                         self._last_name = ep.path.name

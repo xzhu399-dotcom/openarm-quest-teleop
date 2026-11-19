@@ -46,7 +46,7 @@ function setModeControls() {
   $('mouse-start').hidden = mode !== 'observer';
   $('xr-start').hidden = mode !== 'observer';
   $('stop').hidden = mode === 'observer';
-  $('mouse-start').disabled = switching;
+  $('mouse-start').disabled = switching || Boolean(state.gripper_bench);
   $('xr-start').disabled = !xrMode || switching;
   $('clutch').disabled = mode !== 'mouse';
   $('trigger').disabled = mode !== 'mouse';
@@ -433,8 +433,19 @@ function updateScene(hand) {
   drawScene(pad,state.hands,side);
   lastScene=key;
 }
+function benchStatus() {
+  const bench = state.gripper_bench;
+  if (!bench) return '';
+  const mode = bench.enabled === null ? 'disable unconfirmed' : bench.mode === 'shadow' ? 'read-only' :
+    (bench.enabled ? 'ENABLED' : 'execution mode');
+  const measurement = Number.isFinite(bench.measured_deg) ? ' · encoder ' + number(bench.measured_deg,2) + '°' : '';
+  return 'Physical ' + bench.arm + ' J8 · ' + mode + ' · ' + bench.phase + measurement;
+}
+
 function render() {
   const h = state.hands?.[side], rec = state.recording || {};
+  $('hardware-status').textContent = benchStatus() || 'Simulation';
+  if (state.gripper_bench) $('mouse-start').disabled = true;
   const source = h?.profile || '';
   const inputLabel = state.session ? (state.frame === 'mouse-local' || state.hands?.right?.profile === 'mouse' ? 'Virtual right Quest controller' : 'Quest controllers') : 'Waiting for input';
   $('source-label').textContent = inputLabel + (state.session && mode === 'observer' ? ' · observing' : '');
@@ -532,7 +543,7 @@ function preview() {
       index:matching ? camera.index : null, stale, liveStatus,
       ageBucket:Number.isFinite(age) ? Math.floor(age/100)*100 : null,
       status: (state.held ? 'HOLD · ' : '') + trial.title,
-      detail:rec.error || trial.detail}};
+      detail:[benchStatus(), rec.error || trial.detail].filter(Boolean).join(' · ')}};
 }
 function updateCameraAge() {
   const {info} = preview();

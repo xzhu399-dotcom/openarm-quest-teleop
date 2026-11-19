@@ -28,6 +28,14 @@ def report_lines(state):
     lines = [f"{recording} | {motion} | trial return {state['trial_return']['status']}",
              f"Frame {frame} | sample {state['seq']} | {state['gripper_mode']} gripper",
              f"Headset  {format_pose(state['head'])}"]
+    bench = state.get("gripper_bench")
+    if bench:
+        def degrees(value):
+            return "pending" if value is None else f"{value:.3f} deg"
+
+        lines.append(f"Physical {bench['arm']} J8 | {bench['mode']} | {bench['phase']} | "
+                     f"enabled {bench['enabled']} | target {degrees(bench['target_deg'])} | "
+                     f"encoder {degrees(bench['measured_deg'])}")
     for side in ("left", "right"):
         hand = state["hands"][side]
         raw_pose = hand["pose"]

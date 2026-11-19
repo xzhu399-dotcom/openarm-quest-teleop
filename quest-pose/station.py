@@ -22,6 +22,9 @@ class Station:
         self.last_arrival = 0
         self.retired = deque(maxlen=256)
         self.last_hold = (False, None)
+        self.safety_epoch = 0
+        self.trial_epoch = 0
+        self.gripper_bench = None
         self.stop = Event()
         self.watchdog = Thread(target=self._watch, name="input-watchdog", daemon=True)
         self.watchdog.start()
@@ -50,6 +53,8 @@ class Station:
         hold = (state["held"], state["reason"] if state["held"] else None)
         if hold != self.last_hold:
             self.last_hold = hold
+            if hold[0]:
+                self.safety_epoch += 1
             self.recorder.event("hold" if hold[0] else "resume", {
                 "reason": hold[1], "session": state["session"], "seq": state["seq"],
                 "hands": state["hands"],
@@ -59,7 +64,8 @@ class Station:
         self._hold_transition(state)
         status = self.recorder.status()
         age = status["camera_age_ms"]
-        return dict(state, owner=self.owner, simulated=True, recording=status, camera={
+        return dict(state, owner=self.owner, simulated=True, safety_epoch=self.safety_epoch,
+                    trial_epoch=self.trial_epoch, gripper_bench=self.gripper_bench, recording=status, camera={
             "id": status["selected_camera"], "label": status["camera_label"],
             "index": status["camera_frame"], "age_s": None if age is None else age / 1000,
         })
@@ -71,6 +77,8 @@ class Station:
     def sample(self, raw):
         session = raw.get("session")
         with self.lock:
+            if self.gripper_bench is not None and raw.get("frame") == "mouse-local":
+                raise Conflict("The physical J8 bench uses the Quest headset input.")
             if session in self.retired:
                 raise Conflict("This input session ended. Start a new input session.")
             if self.owner and session != self.owner and time.monotonic() - self.last_arrival < 2:
@@ -87,8 +95,9 @@ class Station:
             return self._response(state)
 
     def _start_trial(self, task="", stamp=None):
+        self.trial_epoch += 1
         try:
-            self.recorder.start(task, host_ns=stamp)
+            self.recorder.start(task, host_ns=stamp, physical_gripper=self.gripper_bench)
         except (OSError, ValueError) as error:
             self.engine.hold("trial start failed")
             self.engine.trial.result = {"status":"start_failed", "reason":str(error)}
@@ -101,6 +110,7 @@ class Station:
     def _end_trial(self, action, state, raw=None, outcome="unreviewed"):
         if outcome not in OUTCOMES:
             raise ValueError("Unknown episode outcome")
+        self.trial_epoch += 1
         self._camera_ready()
         self.engine.snapshot()  # Check freshness for workstation-originated endings, too.
         self.engine.finish_trial(return_requested=action == "finish_return")
@@ -111,7 +121,7 @@ class Station:
                             "jaw_policy":"hold", **fresh["trial_return"]}, host_ns=stamp)
         try:
             if raw is not None:
-                self.recorder.sample(raw, fresh, stamp)
+                self._save_sample(raw, fresh, stamp)
             saved = self.recorder.finish(outcome)
         except (OSError, ValueError) as error:
             self.engine.hold("trial save failed")
@@ -147,8 +157,13 @@ class Station:
             return self._end_trial(pending_end, state, raw)
         if state["trial_return"] != self.engine.trial.result:
             state = dict(self.engine.snapshot(), accepted=state["accepted"], events=state["events"])
-        self.recorder.sample(raw, state, stamp)
+        self._save_sample(raw, state, stamp)
         return state
+
+    def _save_sample(self, raw, state, stamp):
+        if self.gripper_bench is not None:
+            state = dict(state, gripper_bench=self.gripper_bench)
+        self.recorder.sample(raw, state, stamp)
 
     def control(self, data, local):
         action = data.get("action")

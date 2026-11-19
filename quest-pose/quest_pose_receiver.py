@@ -2,7 +2,7 @@
 """Run the articulated OpenArm simulator locally, or use Quest controllers over HTTPS."""
 
 import argparse
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack
 import hmac
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -229,6 +229,10 @@ def main():
                         help="Show the selected camera and handle positions in this terminal (requires OpenCV)")
     output.add_argument("--pose-report", action="store_true",
                         help="Print headset and hand poses, simulated targets and jaws, and trial starts/stops")
+    parser.add_argument("--gripper-bench", type=Path, metavar="CALIBRATION",
+                        help="Compare Quest commands with one physical J8 encoder on the lab Mac")
+    parser.add_argument("--execute-gripper", action="store_true",
+                        help="Allow supervised J8 movement with --gripper-bench and local operator confirmation")
     parser.add_argument("--certfile", type=Path, help="Lab-trusted TLS certificate chain for the LAN IP (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Private key for --certfile (PEM)")
     args = parser.parse_args()
@@ -242,6 +246,10 @@ def main():
         parser.error("Provide --certfile and --keyfile together with --host.")
     if args.pose_report and args.legacy:
         parser.error("--pose-report needs the standard Quest page. Omit --legacy.")
+    if args.execute_gripper and not args.gripper_bench:
+        parser.error("--execute-gripper requires --gripper-bench CALIBRATION.")
+    if args.gripper_bench and (args.sim or args.legacy or args.terminal_view):
+        parser.error("The physical gripper bench requires --host, the standard Quest page, and a text terminal.")
     try:
         camera_config = None
         if args.cameras:
@@ -257,14 +265,21 @@ def main():
                     suffix = f"?key={server.token}" if tls else ""
                     url = f"{server.scheme}://{host}:{server.server_port}/{suffix}"
                     print(f"Open {url}", flush=True)
-                    print(f"OpenArm robot simulation | {args.gripper_mode} gripper | Ctrl+C to stop", flush=True)
+                    scope = "Simulated arms and jaws"
+                    if args.gripper_bench:
+                        scope = "Physical J8 execution requested" if args.execute_gripper else "Read-only physical J8 test"
+                    print(f"{scope} | {args.gripper_mode} gripper | Ctrl+C to stop", flush=True)
                     if args.pose_report:
                         from pose_report import pose_report
                         # Let recorder.close() report an interrupted trial before the observer exits.
                         observers.enter_context(pose_report(station, trial_events))
-                    from terminal_view import terminal_view
-                    display = terminal_view(station, url) if args.terminal_view else nullcontext()
-                    with display:
+                    with ExitStack() as devices:
+                        if args.terminal_view:
+                            from terminal_view import terminal_view
+                            devices.enter_context(terminal_view(station, url))
+                        if args.gripper_bench:
+                            from gripper_bench import gripper_bench
+                            devices.enter_context(gripper_bench(station, args.gripper_bench, args.execute_gripper))
                         server.serve_forever()
             finally:
                 station.close()

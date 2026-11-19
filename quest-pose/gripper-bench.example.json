@@ -1,0 +1,8 @@
+{
+  "arm": "right",
+  "adapter_serial": null,
+  "hardware_config": "openarm-cli-smooth-accel-20261015-155332/openarm_cli_config.json",
+  "open_deg": null,
+  "closed_deg": null,
+  "max_speed_deg_s": null
+}

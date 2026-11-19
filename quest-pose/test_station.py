@@ -57,6 +57,29 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(status, 200, value)
         return value
 
+    def test_physical_gripper_snapshot_is_separate_from_simulated_pose(self):
+        hardware = {"arm":"right", "mode":"shadow", "phase":"waiting", "enabled":False,
+                    "measured_deg":4.25, "target_deg":None, "feedback_host_ns":time.monotonic_ns()}
+        self.station.gripper_bench = hardware
+        status, _, _ = self.request("/sample", sample(1))
+        self.assertEqual(status, 409)
+        first = sample(1, events=[{"id":1, "action":"record"}])
+        first["frame"] = "local-floor"
+        first["hands"]["right"].update(profile="oculus-touch-v3", source="xr-1", mapping="xr-standard")
+        running = self.ok("/sample", first)
+        self.assertEqual(running["gripper_bench"], hardware)
+        self.assertTrue(running["recording"]["active"])
+        end = self.ok("/control", {"action":"record"})
+        self.assertGreater(end["trial_epoch"], running["trial_epoch"])
+        held = self.ok("/control", {"action":"hold"})
+        self.assertGreater(held["safety_epoch"], end["safety_epoch"])
+        episode = self.directory / end["recording"]["episode"]
+        self.assertEqual(inspect_episode(episode)["physical_gripper"]["mode"], "shadow")
+        feedback = json.loads((episode / "feedback.jsonl").read_text().splitlines()[0])
+        self.assertEqual(feedback["physical_gripper"], hardware)
+        self.assertIsNone(feedback["hands"]["right"]["measured_joints"])
+        self.assertTrue(feedback["simulated"])
+
     def test_owner_release_capture_and_malformed_sample(self):
         first = self.ok("/sample", sample(1))
         self.assertTrue(first["simulated"])

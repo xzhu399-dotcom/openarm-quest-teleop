@@ -6,6 +6,9 @@ __pycache__/
 venv/
 cameras.lab.json
 openarm_cli_config.json
+gripper-bench.lab.json
+motor-test-logs/
+.openarm-cli-locks/
 *.pem
 *.key
 .env

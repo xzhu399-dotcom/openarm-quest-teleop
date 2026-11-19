@@ -12,6 +12,7 @@ from unittest.mock import patch
 from quest_pose_receiver import make_server
 from replay import inspect_episode
 from station import Station
+from test_teleop import hand
 
 
 def sample(seq, x=0.0, grip=0, events=(), session="operator"):
@@ -23,6 +24,15 @@ def sample(seq, x=0.0, grip=0, events=(), session="operator"):
                   "buttons": [{"value": 0, "pressed": False}, {"value": grip, "pressed": bool(grip)}],
                   "axes": []}}, "events": list(events),
     }
+
+
+def quest_sample(seq, x=0., grip=0, *, b=False, events=(), session="operator"):
+    packet = sample(seq, events=events, session=session)
+    packet["frame"] = "local-floor"
+    right = hand((x, 1.2, -.4), grip=grip, b=b, profile="oculus-touch-v3")
+    right.update(handedness="right", source="xr-1", mapping="xr-standard")
+    packet["hands"]["right"] = right
+    return packet
 
 
 class ReceiverTests(unittest.TestCase):
@@ -57,22 +67,112 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(status, 200, value)
         return value
 
+    def test_quest_grip_moves_through_b_and_recording_boundaries(self):
+        first = self.ok("/sample", quest_sample(1, grip=1))
+        origin = first["hands"]["right"]["tool"]["p"][0]
+        self.assertTrue(first["grip_only"])
+        self.assertTrue(first["hands"]["right"]["clutched"])
+        self.assertFalse(self.ok("/control", {"action": "hold"})["held"])
+
+        # An older Quest page can still send its queued B event and raw button together.
+        events = [{"id": 1, "action": "hold"}, {"id": 2, "action": "record"}]
+        started = self.ok("/sample", quest_sample(2, .01, 1, b=True, events=events))
+        self.assertFalse(started["held"])
+        self.assertEqual(started["ack"], 2)
+        self.assertTrue(started["recording"]["active"])
+        self.assertAlmostEqual(started["hands"]["right"]["tool"]["p"][0], origin + .01)
+        moving = self.ok("/sample", quest_sample(3, .02, 1, b=True))
+        self.assertAlmostEqual(moving["hands"]["right"]["tool"]["p"][0], origin + .02)
+
+        saved = self.ok("/sample", quest_sample(4, .03, 1, events=[{"id": 3, "action": "record"}]))
+        self.assertEqual(saved["recording"]["last_episode_status"], "saved")
+        self.assertAlmostEqual(saved["hands"]["right"]["tool"]["p"][0], origin + .03)
+        after = self.ok("/sample", quest_sample(5, .04, 1))
+        self.assertAlmostEqual(after["hands"]["right"]["tool"]["p"][0], origin + .04)
+        released = self.ok("/sample", quest_sample(6, .20))
+        self.assertFalse(released["hands"]["right"]["clutched"])
+        self.assertEqual(released["hands"]["right"]["tool"], after["hands"]["right"]["tool"])
+
+    def test_quest_reanchors_after_tracking_loss_and_reconnect_with_grip_down(self):
+        self.ok("/sample", quest_sample(1, grip=1))
+        tool = self.ok("/sample", quest_sample(2, .02, 1))["hands"]["right"]["tool"]
+        hidden = quest_sample(3, .30, 1)
+        hidden["visible"] = False
+        paused = self.ok("/sample", hidden)
+        self.assertFalse(paused["hands"]["right"]["clutched"])
+        self.assertEqual(paused["hands"]["right"]["tool"], tool)
+
+        recovered = self.ok("/sample", quest_sample(4, .60, 1))
+        self.assertFalse(recovered["held"])
+        self.assertEqual(recovered["hands"]["right"]["tool"], tool)
+        moving = self.ok("/sample", quest_sample(5, .61, 1))["hands"]["right"]["tool"]
+        self.assertAlmostEqual(moving["p"][0], tool["p"][0] + .01)
+
+        self.ok("/control", {"action": "release", "session": "operator"})
+        reconnected = self.ok("/sample", quest_sample(1, -.50, 1, session="new"))
+        self.assertFalse(reconnected["held"])
+        self.assertEqual(reconnected["hands"]["right"]["tool"], moving)
+        moved = self.ok("/sample", quest_sample(2, -.48, 1, session="new"))["hands"]["right"]["tool"]
+        self.assertAlmostEqual(moved["p"][0], moving["p"][0] + .02)
+
+        time.sleep(self.station.engine.timeout_s + .1)
+        stale = self.ok("/state")
+        self.assertFalse(stale["hands"]["right"]["tracked"])
+        anchored = self.ok("/sample", quest_sample(3, .75, 1, session="new"))
+        self.assertEqual(anchored["hands"]["right"]["tool"], moved)
+        fresh = self.ok("/sample", quest_sample(4, .76, 1, session="new"))
+        self.assertAlmostEqual(fresh["hands"]["right"]["tool"]["p"][0], moved["p"][0] + .01)
+
+    def test_quest_legacy_return_gesture_saves_without_moving_released_arms(self):
+        started = self.ok("/sample", quest_sample(1, events=[{"id": 1, "action": "record"}]))
+        self.ok("/sample", quest_sample(2, grip=1))
+        moved = self.ok("/sample", quest_sample(3, .03, 1))["hands"]["right"]["tool"]
+        self.assertNotEqual(moved, started["hands"]["right"]["tool"])
+        saved = self.ok("/sample", quest_sample(4, .03, events=[{"id": 2, "action": "finish_return"}]))
+        self.assertEqual(saved["recording"]["last_episode_status"], "saved")
+        self.assertEqual(saved["trial_return"]["status"], "stayed")
+        self.assertEqual(self.ok("/sample", quest_sample(5, .10))["hands"]["right"]["tool"], moved)
+
+    def test_quest_camera_loss_and_unreachable_goal_do_not_latch_motion(self):
+        first = self.ok("/sample", quest_sample(1, grip=1))
+        origin = first["hands"]["right"]["tool"]["p"][0]
+        status = self.station.recorder.status()
+        status.update(camera_mode="opencv", camera_stalled=True)
+        packet = quest_sample(2, .02, 1)
+        packet["view_valid"] = False
+        with patch.object(self.station.recorder, "status", return_value=status):
+            moving = self.ok("/sample", packet)
+        self.assertFalse(moving["held"])
+        before = moving["hands"]["right"]
+        self.assertAlmostEqual(before["tool"]["p"][0], origin + .02)
+        far = self.ok("/sample", quest_sample(3, 2., 1))["hands"]["right"]
+        self.assertEqual(far["tool"], before["tool"])
+        self.assertEqual(far["robot"]["joint_angles_rad"], before["robot"]["joint_angles_rad"])
+        back = self.ok("/sample", quest_sample(4, .04, 1))["hands"]["right"]
+        self.assertAlmostEqual(back["tool"]["p"][0], origin + .04)
+
     def test_physical_gripper_snapshot_is_separate_from_simulated_pose(self):
         hardware = {"arm":"right", "mode":"shadow", "phase":"waiting", "enabled":False,
                     "measured_deg":4.25, "target_deg":None, "feedback_host_ns":time.monotonic_ns()}
         self.station.gripper_bench = hardware
         status, _, _ = self.request("/sample", sample(1))
         self.assertEqual(status, 409)
-        first = sample(1, events=[{"id":1, "action":"record"}])
-        first["frame"] = "local-floor"
-        first["hands"]["right"].update(profile="oculus-touch-v3", source="xr-1", mapping="xr-standard")
+        first = quest_sample(1, events=[{"id":1, "action":"record"}])
         running = self.ok("/sample", first)
+        self.assertFalse(running["grip_only"])
         self.assertEqual(running["gripper_bench"], hardware)
         self.assertTrue(running["recording"]["active"])
         end = self.ok("/control", {"action":"record"})
         self.assertGreater(end["trial_epoch"], running["trial_epoch"])
         held = self.ok("/control", {"action":"hold"})
         self.assertGreater(held["safety_epoch"], end["safety_epoch"])
+        self.ok("/sample", quest_sample(2))
+        self.assertFalse(self.ok("/control", {"action": "resume"})["held"])
+        stopped = self.ok("/sample", quest_sample(3, grip=1, b=True))
+        self.assertEqual(stopped["reason"], "operator hold")
+        after_b = self.ok("/sample", quest_sample(4, .04, 1))
+        self.assertTrue(after_b["held"])
+        self.assertEqual(after_b["hands"]["right"]["tool"], stopped["hands"]["right"]["tool"])
         episode = self.directory / end["recording"]["episode"]
         self.assertEqual(inspect_episode(episode)["physical_gripper"]["mode"], "shadow")
         feedback = json.loads((episode / "feedback.jsonl").read_text().splitlines()[0])

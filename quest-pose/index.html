@@ -40,7 +40,7 @@
           <div><small>Wrist orientation</small><span id="wrist-rotation">—</span></div>
         </div>
         <div class="motion-help">
-          <div class="mouse-modes"><strong>Mouse control</strong><div class="segmented" role="group" aria-label="Mouse control mode"><button id="mode-move" aria-pressed="true">Move</button><button id="mode-rotate" aria-pressed="false">Rotate</button><button id="mode-gripper" aria-pressed="false">Gripper</button></div></div>
+          <div class="mouse-modes" id="mouse-modes"><strong>Mouse control</strong><div class="segmented" role="group" aria-label="Mouse control mode"><button id="mode-move" aria-pressed="true">Move</button><button id="mode-rotate" aria-pressed="false">Rotate</button><button id="mode-gripper" aria-pressed="false">Gripper</button></div></div>
           <p id="mode-help">Right-drag to clutch and move the arm. Scroll while holding the right button to control depth. Left-drag to reposition the released handle.</p>
           <p id="reach-help" class="pickup" role="status" hidden></p>
           <p id="pickup-help" class="pickup" hidden></p>
@@ -53,7 +53,7 @@
           <div class="panel-heading"><h2>Episode</h2><span id="rec-state" class="pill">Idle</span></div>
           <div class="episode-body"><div class="timer" id="timer">00:00.0</div><div class="buttons"><button id="record" class="primary">Start recording</button><button id="finish_return" hidden>Save &amp; return</button><button id="mark" disabled>Add marker</button></div>
             <p id="trial-status" role="status" hidden></p>
-            <p class="minor">A starts or saves the trial in place. To save and return the simulated arms to their trial-start pose, release both grips, hold the left stick click and tap A.</p>
+            <p class="minor">A starts or saves the trial in place.<span id="return-help"> To save and return the simulated arms to their trial-start pose, release both grips, hold the left stick click and tap A.</span></p>
             <p id="episode-file" class="minor" hidden></p><p id="rec-error" class="notice" role="alert" hidden></p></div>
         </section>
         <section class="panel camera">
@@ -61,7 +61,7 @@
           <div class="camera-picture"><canvas id="camera-frame" width="320" height="180" aria-label="Selected workstation camera feed"></canvas></div>
           <div class="camera-caption"><strong id="camera-name">Waiting for frame</strong><span id="camera-age">—</span></div>
         </section>
-        <section class="panel safety">
+        <section class="panel safety" id="hold-panel">
           <div><h2>Software hold</h2><p id="hold-state">Waiting for receiver</p></div>
           <div class="buttons"><button id="hold">Hold</button><button id="resume" hidden>Resume</button></div>
         </section>

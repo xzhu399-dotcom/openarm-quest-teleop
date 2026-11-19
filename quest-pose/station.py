@@ -44,7 +44,7 @@ class Station:
     def _camera_ready(self, incoming=False):
         status = self.recorder.status()
         if (self.owner or incoming) and status.get("camera_mode") == "opencv" and status["camera_stalled"]:
-            if not self.engine.held:
+            if not self.engine.held and not self.engine.grip_only:
                 self.engine.hold("selected camera feed unavailable")
             return False
         return True
@@ -84,7 +84,7 @@ class Station:
             if self.owner and session != self.owner and time.monotonic() - self.last_arrival < 2:
                 raise Conflict("Another input source is active. Stop it before switching.")
             self._camera_ready(incoming=True)
-            state = self.engine.apply(raw)
+            state = self.engine.apply(raw, quest_simulation=self.gripper_bench is None)
             if state["accepted"]:
                 if self.owner and self.owner != session:
                     self.retired.append(self.owner)
@@ -113,12 +113,14 @@ class Station:
         self.trial_epoch += 1
         self._camera_ready()
         self.engine.snapshot()  # Check freshness for workstation-originated endings, too.
-        self.engine.finish_trial(return_requested=action == "finish_return")
+        return_requested = action == "finish_return" and not self.engine.grip_only
+        self.engine.finish_trial(return_requested=return_requested)
         fresh = self.engine.snapshot()
         fresh.update(accepted=state["accepted"], events=state["events"])
         stamp = round(state["arrival_s"] * 1e9) if raw is not None else time.monotonic_ns()
-        self.recorder.event("trial_finish", {"choice":"return" if action == "finish_return" else "stay",
-                            "jaw_policy":"hold", **fresh["trial_return"]}, host_ns=stamp)
+        self.recorder.event("trial_finish", {"choice":"return" if return_requested else "stay",
+                            "jaw_policy":"side_grip" if self.engine.grip_only else "hold",
+                            **fresh["trial_return"]}, host_ns=stamp)
         try:
             if raw is not None:
                 self._save_sample(raw, fresh, stamp)

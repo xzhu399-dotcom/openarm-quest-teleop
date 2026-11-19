@@ -16,13 +16,11 @@ The table describes the simulated arms. For the optional J8 bench, follow the ph
 | Set jaw opening in **trigger** mode | While clutched, squeeze or ease the **index trigger** | Continuous absolute closure. Fully squeezed closes, fully released opens. Each arm has its own trigger. |
 | Adjust jaw opening in **stick** mode | While clutched, tilt that hand's **thumbstick up** to open or **down** to close | Tilt controls adjustment speed. Let the stick spring to center to retain the exact opening while moving or rotating the arm. |
 | Start a trial | Tap **right A** while idle | Starts recording and captures both simulated arms' starting joint positions. A does not engage a clutch. |
-| End the trial and stay | Tap **right A** while recording | Finalizes the episode and holds both arms and jaws at the endpoint. Use a fresh side-grip squeeze to take control again. |
-| End the trial and return | Release both side grips. Press and hold the **left thumbstick straight down as a button**, tap **right A**, then release the stick button. | Finalizes the episode, then returns both simulated arms to the joint configurations captured at trial start. Jaw openings stay at their final values. This chord has no start action when idle. |
-| Stop motion | Press **right B** | Latches a software hold on both arms. To continue, restore fresh input and camera feedback, click **Resume** on the workstation, release the grips and re-clutch. |
+| End the trial | Tap **right A** while recording | Saves the episode. Side-grip control continues. Release the grips to leave both arms at the endpoint. |
 | Switch the displayed camera | Tap **left X** | Cycles **Overview → Left wrist → Right wrist → Overview**. All three cameras continue recording. |
 | Mark a moment | Tap **left Y** during recording | Writes a timestamped marker, for example contact or a slip. |
 
-**Tilt** and **click** are different thumbstick inputs. Tilting the stick down changes closure in stick mode. Clicking the left stick while tapping right A selects the trial-ending action. Head movement changes the view. The Meta/system button belongs to the headset. The mapping is based on the Oculus Touch v3 WebXR profile. [Controller profile](https://raw.githubusercontent.com/immersive-web/webxr-input-profiles/main/packages/registry/profiles/oculus/oculus-touch-v3.json)
+If tracking drops during simulated motion, the affected arm stays at its last pose. With its side grip still squeezed, fresh tracking anchors the handle there, and subsequent hand motion drives the arm again. Head movement changes the view. On the physical gripper bench, **right B** stops J8. The mapping is based on the Oculus Touch v3 WebXR profile. [Controller profile](https://raw.githubusercontent.com/immersive-web/webxr-input-profiles/main/packages/registry/profiles/oculus/oculus-touch-v3.json)
 
 ### How to maintain a grasp
 
@@ -89,16 +87,16 @@ If the page does not load, check the LAN IP, firewall access for the receiver on
 
 The workstation opens the three sources and serves one selected frame stream over the same authenticated HTTPS connection. The Quest draws that image on an immersive panel. In physical/file-camera mode the panel displays the chosen feed by itself, with camera and trial status. In synthetic mode the articulated robot also appears in stereo. The workstation browser and the `--terminal-view` picture follow the same selection. The terminal renders the actual image as colored character cells and reports the tracked handles. Enlarge the terminal for more detail.
 
-Before recording, tap **left X** through all three views. Cover or wave at one lens at a time to verify its label, orientation, and wrist side. Check that the image updates on the Quest **and** in the workstation terminal. A stale or unavailable selected physical feed should be treated as lost feedback. Restore fresh imagery and resume locally if the station latched a hold. Preview age is measured from workstation receipt. The headset display and USB cameras still need an on-device latency check for your task.
+Before recording, tap **left X** through all three views. Cover or wave at one lens at a time to verify its label, orientation, and wrist side. Check that the image updates on the Quest **and** in the workstation terminal. If a camera stalls, the controller can still drive the simulated arm. Check the episode's camera status and restore the feed before collecting another demonstration. Preview age is measured from workstation receipt. The headset display and USB cameras still need an on-device latency check for your task.
 
 For a lab latency measurement, point the selected camera at a flashing LED. With all three cameras recording, use a separate high-speed camera to film both the LED and its image through a headset lens. Count the frames between each pair of flashes and divide by the high-speed camera's frame rate. Report the median and 95th percentile across repeated flashes for each view.
 
 ## 4. Collect and finish one trial
 
 1. With the grips released, put the handles in a comfortable pose. **Capture initial pose** on the workstation records the handle reference in `episodes/initial_poses.json`. A new clutch squeeze captures a separate hand/tool reference for motion.
-2. Set the **simulated arms** to the pose you want to return to. Release both grips. Tap **right A** once. Check for **REC** and elapsed time in the headset before beginning. The trial-start joint snapshot is taken now. This is distinct from the initial handle reference.
+2. Set the **simulated arms** to the pose where you want the trial to start. Tap **right A** once. Check for **REC** and elapsed time in the headset. The trial-start snapshot records the current joints.
 3. Clutch only the arm you intend to move. Move the handles, rotate your wrists, and adjust the jaws using the selected mode. Tap **left X** for another view or **left Y** for a marker.
-4. At the endpoint, release both side grips. To **save and stay**, tap **right A**. To **save and return**, hold the **left thumbstick click** and tap **right A**. Keep the controllers used during the trial tracked and the grips released until the return finishes. Watch the headset's saved/incomplete and return status. **Right B** interrupts a return. The motion back to the start happens after recording stops. A held jaw stays at its endpoint opening during return.
+4. At the endpoint, release both side grips and tap **right A** to save. Check the headset for **Trial saved** or **Incomplete trial**.
 5. If an episode is incomplete, inspect its camera status and files before using it as a demonstration. Restore any missing feed before the next trial. Tap A to start the next trial after the previous action finishes. Use Ctrl+C in the receiver terminal when the session is over.
 
 ## 5. Verify and label the dataset
@@ -124,4 +122,4 @@ Use the [trial metrics command](quest-pose/trial_metrics.py) to review the obser
 | `overview.mjpg`, `left_wrist.mjpg`, `right_wrist.mjpg` | Three independent full-color Motion JPEG streams when using devices or files. Synthetic camera recordings use animated PNGs. |
 | `*.frames.jsonl` | Stream-specific indices, host timestamps and frame offsets. Align streams by time. Device exposure times and hardware synchronization are unknown. |
 
-The first lab run should verify the actual Touch button mapping, the camera-to-label assignment, successful replay of all three streams and one **save and stay** followed by one **save and return**. A simulation result establishes the software behavior. Physical grasp force, motor faults, collision clearance and the real robot's return path require separate commissioning.
+The first lab run should verify the actual Touch button mapping, the camera-to-label assignment, successful replay of all three streams and an episode saved with **right A**. A simulation result establishes the software behavior. Physical grasp force, motor faults, collision clearance and the real robot's return path require separate commissioning.

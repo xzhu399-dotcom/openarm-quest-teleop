@@ -24,6 +24,8 @@ def report_lines(state):
     else:
         recording = "Recording IDLE"
     motion = "HOLD " + state["reason"] if state["held"] else "ready"
+    if state.get("grip_only"):
+        motion = state["reason"] or "side-grip control"
     frame = ascii(state["frame"]) if state["frame"] is not None else "waiting for input"
     lines = [f"{recording} | {motion} | trial return {state['trial_return']['status']}",
              f"Frame {frame} | sample {state['seq']} | {state['gripper_mode']} gripper",

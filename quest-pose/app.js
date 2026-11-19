@@ -43,6 +43,10 @@ function jawReadout(value) {
   return (value < 0 ? 'Open ' : 'Close ') + Math.round(Math.abs(value)*100)+'%';
 }
 function setModeControls() {
+  const questControls = mode === 'quest' || (mode === 'observer' && state.grip_only);
+  $('mouse-modes').hidden = Boolean(questControls);
+  $('face-b').hidden = $('hold-panel').hidden = Boolean(state.grip_only);
+  $('return-help').hidden = Boolean(state.grip_only);
   $('mouse-start').hidden = mode !== 'observer';
   $('xr-start').hidden = mode !== 'observer';
   $('stop').hidden = mode === 'observer';
@@ -57,7 +61,7 @@ function setModeControls() {
     $('mode-'+name).disabled = mode === 'quest';
     $('mode-'+name).setAttribute('aria-pressed',String(mouseMode === name));
   }
-  if (mode === 'quest') {
+  if (questControls) {
     $('mode-help').textContent = 'Hold the side grip to move or rotate the tool. ' + (stickMode()
       ? 'Tilt the thumbstick up to open or down to close. Center it to keep the opening while moving.'
       : 'Squeeze the trigger to close or ease off to open. Release the side grip first to keep the opening.');
@@ -93,14 +97,14 @@ async function request(path, body) {
     }
     if (num >= latestApplied) {
       latestApplied = num;
-      const oldMode = state.gripper_mode;
+      const controlsChanged = state.gripper_mode !== data.gripper_mode || state.grip_only !== data.grip_only;
       if (state.recording?.selected_camera !== data.recording?.selected_camera ||
           (data.recording?.active && !state.recording?.active)) {
         displayedId = '';
         displayGeneration++;
       }
       state = data;
-      if (oldMode !== data.gripper_mode) setModeControls();
+      if (controlsChanged) setModeControls();
       render();
     }
     return data;
@@ -130,11 +134,12 @@ function releaseMouseGrip() {
 function resetEdges() { edges = new Map(); }
 function enqueue(action) {
   if (events.length >= 24) {
-    // Stop accepting input on sustained event backpressure. Latch hold on the next delivered sample.
+    // Report the input gap to the receiver before accepting more button events.
     if (!eventOverflow) {
       eventOverflow = true;
       visibleLoss = ++signalCounter;
-      message('Input event buffer is full. Resume locally after reconnecting.');
+      message(state.grip_only ? 'Input event buffer is full. Waiting for the receiver.'
+        : 'Input event buffer is full. Resume locally after reconnecting.');
     }
     return;
   }
@@ -143,7 +148,7 @@ function enqueue(action) {
 function readEdges(hands) {
   for (const side of sides) {
     const hand = hands[side];
-    const actions = side === 'right' ? ['record','hold'] : ['view','mark'];
+    const actions = side === 'left' ? ['view','mark'] : state.grip_only ? ['record'] : ['record','hold'];
     if (!hand?.pose || !touchLayout(hand.profile,side).length) {
       for (const action of actions) edges.delete(action);
       continue;
@@ -153,7 +158,7 @@ function readEdges(hands) {
       const previous = edges.get(action);
       if (down && previous?.source === hand.source && previous.down === false) {
         const left = hands.left;
-        const returnChord = action === 'record' && left?.pose &&
+        const returnChord = !state.grip_only && action === 'record' && left?.pose &&
           touchLayout(left.profile,'left').length && left.buttons[3]?.pressed;
         // Use the explicit finish action even if this browser's recording state
         // is stale. A finish chord received while idle must never start a trial.
@@ -464,7 +469,8 @@ function render() {
   const rejected=h?.status === 'outside simulated reach';
   $('reach-help').hidden = !rejected;
   $('reach-help').textContent = rejected ? 'Arm held at last reachable pose (' + (robot?.status || h.status)
-    + '). Release the grip, reposition the handle, then clutch again.' : '';
+    + '). ' + (state.grip_only ? 'Move the handle back into reach.'
+      : 'Release the grip, reposition the handle, then clutch again.') : '';
   if (mode !== 'mouse') {
     const val = stickMode() ? h?.axes?.[3] || 0 : h?.buttons?.[0]?.value || 0;
     $('trigger').value = Math.round(val*100);
@@ -476,9 +482,9 @@ function render() {
   $('capture').disabled = !state.session || !Object.values(state.hands || {}).some(v => v?.pose);
   $('timer').textContent = clock(rec.elapsed_s);
   const returning = state.trial_return?.status === 'returning';
-  $('record').textContent = rec.active ? 'Save & stay' : 'Start recording';
+  $('record').textContent = rec.active ? (state.grip_only ? 'Save recording' : 'Save & stay') : 'Start recording';
   $('record').disabled = returning;
-  $('finish_return').hidden = !rec.active;
+  $('finish_return').hidden = !rec.active || Boolean(state.grip_only);
   $('mark').disabled = !rec.active;
   const trial = trialStatus();
   $('rec-state').textContent = rec.active ? 'Recording' : trial.title;
@@ -518,7 +524,7 @@ function trialStatus() {
   const title = {incomplete:'Incomplete trial', interrupted:'Interrupted trial', saved:'Trial saved'}[rec.last_episode_status]
       || (rec.episode && result.status !== 'idle' ? 'Trial saved' : 'Idle');
   const outcomes = {
-    stayed:'Arms stayed at the ending pose.',
+    stayed:state.grip_only ? '' : 'Arms stayed at the ending pose.',
     returning:'Returning to the trial-start pose.',
     completed:'Returned to the trial-start pose.',
     skipped:'Return skipped.', cancelled:'Return cancelled.'
@@ -543,7 +549,7 @@ function preview() {
       index:matching ? camera.index : null, stale, liveStatus,
       ageBucket:Number.isFinite(age) ? Math.floor(age/100)*100 : null,
       status: (state.held ? 'HOLD · ' : '') + trial.title,
-      detail:[benchStatus(), rec.error || trial.detail].filter(Boolean).join(' · ')}};
+      detail:[benchStatus(), state.grip_only && state.reason, rec.error || trial.detail].filter(Boolean).join(' · ')}};
 }
 function updateCameraAge() {
   const {info} = preview();

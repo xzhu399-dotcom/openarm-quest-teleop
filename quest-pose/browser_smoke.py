@@ -331,9 +331,8 @@ def exercise_quest(client, address, station):
     assert eye_vertices["left"] == eye_vertices["right"]
     pixels = client.evaluate("questFixture.robotPixels")
     assert min(pixels.values()) > 30, pixels
-    client.click("resume")
-    wait_for(lambda: not station.state()["held"] and hand()["status"] == "released",
-             "neutral Quest grip after deliberate resume")
+    wait_for(lambda: station.state()["grip_only"] and hand()["status"] == "released"
+             and client.evaluate("document.getElementById('hold-panel').hidden"), "Quest grip controls")
     before = check_robot(hand())
     def button(index, value, side="right"):
         client.evaluate(f"questFixture.button({index},{value},{json.dumps(side)})")
@@ -341,12 +340,12 @@ def exercise_quest(client, address, station):
                  f"raw {side} button {index} = {value}")
     button(3,1,"left")
     button(4,1)
-    assert not station.recorder.status()["active"]
+    wait_for(lambda: station.recorder.status()["active"], "A starts Quest trial with left stick clicked")
     button(4,0)
     button(3,0,"left")
-    button(4,1)
-    wait_for(lambda: station.recorder.status()["active"], "A starts Quest trial")
-    button(4,0)
+    wait_for(lambda: client.evaluate("document.getElementById('finish_return').hidden"
+                                     " && document.getElementById('face-b').hidden"), "Quest recording controls")
+    button(5,1)
     client.evaluate("questFixture.button(1, 1)")
     wait_for(lambda: hand()["clutched"], "Quest side grip")
     client.evaluate("questFixture.hand.position.x -= .025")
@@ -354,6 +353,7 @@ def exercise_quest(client, address, station):
     moved = check_robot(hand())
     assert abs(before["tcp"]["p"][0] - moved["tcp"]["p"][0] - .025) < .001
     assert math.dist(before["joint_angles_rad"], moved["joint_angles_rad"]) > .01
+    button(5,0)
     client.evaluate("Object.assign(questFixture.hand.orientation, {y: Math.sin(.1), w: Math.cos(.1)})")
     wait_for(lambda: math.isclose(hand()["clutch_delta"]["q"][1], math.sin(.1)), "Quest wrist rotation")
     rotated = check_robot(hand())
@@ -376,18 +376,15 @@ def exercise_quest(client, address, station):
     wait_for(lambda: not station.recorder.status()["active"], "left stick click + A saves")
     button(4,0)
     button(3,0,"left")
-    wait_for(lambda: station.state()["trial_return"]["status"] == "completed", "return to trial start")
-    restored = check_robot(hand())
-    assert math.dist(before["joint_angles_rad"], restored["joint_angles_rad"]) < .001
-    assert math.isclose(restored["jaw_opening_m"], grasp["jaw_opening_m"])
-    wait_for(lambda: client.evaluate("questFixture.hudLines.includes('Returned to the trial-start pose.')"),
-             "saved trial and return completion painted in headset")
-    client.evaluate("questFixture.button(5, 1)")
-    wait_for(lambda: station.state()["held"], "Quest B holds robot")
+    wait_for(lambda: station.state()["trial_return"]["status"] == "stayed", "Quest trial ends in place")
+    endpoint = check_robot(hand())
+    assert endpoint["joint_angles_rad"] == grasp["joint_angles_rad"]
+    assert endpoint["jaw_opening_m"] == grasp["jaw_opening_m"]
+    wait_for(lambda: client.evaluate("questFixture.hudLines.includes('Trial saved')"), "save painted in headset")
     client.click("stop")
     wait_for(lambda: station.state()["owner"] is None, "Quest disconnect")
     assert not client.errors, client.errors
-    print("Synthetic Quest Touch grip, 25 mm move, 11.46 degree wrist rotation, 65% closure and B hold passed;",
+    print("Synthetic Quest Touch grip, 25 mm move with B pressed, 11.46 degree wrist rotation and 65% closure passed;",
           eye_vertices["right"], "mesh vertices per eye;",
           pixels, "visible robot pixels in sampled regions.")
 
@@ -452,8 +449,7 @@ def exercise_camera_workflow(client, address, station):
              "mock Quest with three video sources")
     client.click("xr-start")
     wait_for(lambda: hand()["profile"] == "oculus-touch-v3", "Quest controller stream")
-    client.click("resume")
-    wait_for(lambda: not station.state()["held"], "resume after switching controller sessions")
+    wait_for(lambda: station.state()["grip_only"] and not station.state()["held"], "Quest takes control")
     def button(index, pressed, side):
         client.evaluate(f"questFixture.button({index},{int(pressed)},{json.dumps(side)})")
         wait_for(lambda: station.state()["hands"][side]["buttons"][index]["pressed"] == pressed, "button delivery")
@@ -494,15 +490,21 @@ def exercise_camera_workflow(client, address, station):
     wait_for(lambda: client.evaluate("questFixture.hudLines.includes('Trial saved')"), "Quest save receipt")
     client.evaluate("""window.workingFetch=window.fetch;
         window.fetch=(path,...args)=>path==='/camera' ? Promise.reject(Error('fixture drop')) : workingFetch(path,...args)""")
-    wait_for(lambda: station.state()["held"] and "display" in station.state()["reason"], "client display-loss hold")
+    wait_for(lambda: not station.state()["view_valid"], "client reports missing display frames")
     assert not station.recorder.status()["camera_stalled"]
+    button(1, True, "right")
+    wait_for(lambda: hand()["clutched"], "grip engages during display loss")
+    previous = hand()["tool"]["p"]
+    client.evaluate("questFixture.hand.position.x += .01")
+    wait_for(lambda: math.dist(hand()["tool"]["p"], previous) > .008, "simulated arm moves during display loss")
+    button(1, False, "right")
     client.evaluate("window.fetch=workingFetch")
     wait_for(lambda: client.evaluate("document.getElementById('camera-age').textContent.startsWith('Live')"),
              "camera display recovered")
-    assert station.state()["held"]
+    assert not station.state()["held"]
     assert not client.errors, client.errors
     print("Mouse and Quest stick centering retained jaw opening during arm motion. "
-          "Both eyes showed the selected red, green and blue feeds; display loss latched hold.")
+          "Both eyes showed the selected red, green and blue feeds; grip control continued during display loss.")
     return name
 
 

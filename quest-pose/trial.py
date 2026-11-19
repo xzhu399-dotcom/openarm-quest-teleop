@@ -37,7 +37,7 @@ class Trial:
         target, self.start = self.start, None
         self.path = None
         if not return_requested:
-            self.result = {"status": "stayed", "reason": "Arms and jaw openings held at the trial endpoint."}
+            self.result = {"status": "stayed", "reason": "Trial ended at the current arm poses and jaw openings."}
             return
         problem = held_reason or self._input_problem(hands, self.required)
         if not problem and (target is None or self.session != session):

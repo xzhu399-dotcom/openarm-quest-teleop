@@ -1,6 +1,6 @@
 # OpenArm teleoperation and data collection with Meta Quest 2
 
-Use Quest Touch controllers to move a simulated OpenArm, watch a selected robot-mounted camera and record all three views. The default receiver computes arm motion, jaw opening and return-to-start in simulation. On a Mac, the optional physical bench mode connects one calibrated J8 gripper for encoder readback and supervised motion. Quest-driven physical J1–J7 motion still requires a calibrated full-arm bridge. The supplied Mac hardware console can operate independently.
+Use Quest Touch controllers to move a simulated OpenArm, watch a selected robot-mounted camera and record all three views. Each side grip controls its arm while recording or idle. On a Mac, the optional physical bench mode connects one calibrated J8 gripper for encoder readback and supervised motion. Quest-driven physical J1–J7 motion still requires a calibrated full-arm bridge. The supplied Mac hardware console can operate independently.
 
 **Taking this to a new lab computer?** Start with the [lab handoff](LAB_HANDOFF.md) for the fresh-clone procedure, real-Quest simulation check and physical gripper bench test.
 
@@ -78,7 +78,7 @@ The default launch uses OpenSSL to generate a short-lived HTTPS certificate. If 
 
 **3. Pair and verify.** In Meta Quest Browser, open the **full HTTPS URL printed in the terminal**, including the port and `?key=...`. Select **Start Quest**. Open the same URL on the workstation to see the inspector. With both grips released, move each handle and check that its reported position changes. Press **left X** three times to verify the camera labels and confirm that the headset and terminal show the same feed.
 
-**4. Record one trial.** With grips released, select **Capture initial pose** on the workstation. Tap **right A** to start and check for **REC**. Hold the side grip to move or rotate that arm. With the side grip held, tilt the thumbstick up to open or down to close and let it center to preserve the opening. Release both side grips to finish. Tap **right A** to save and stay, or hold **left thumbstick click** and tap **right A** to save and return the simulated arms to their trial-start positions. All three videos are recorded even while only one is displayed. Check the save status before starting the next trial. From the same Python environment, run `python quest-pose/replay.py episodes/EPISODE_ID` with the directory name shown by the station. Substitute the virtual environment’s Python path if necessary. [Full collection guide and button reference](QUEST2_DATA_COLLECTION.md)
+**4. Record one trial.** With grips released, select **Capture initial pose** on the workstation. Tap **right A** to start and check for **REC**. Hold the side grip to move or rotate that arm. With the side grip held, tilt the thumbstick up to open or down to close and let it center to preserve the opening. Release the side grips to leave both arms in place and tap **right A** to save. All three videos are recorded even while only one is displayed. Check the save status before starting the next trial. From the same Python environment, run `python quest-pose/replay.py episodes/EPISODE_ID` with the directory name shown by the station. Substitute the virtual environment’s Python path if necessary. [Full collection guide and button reference](QUEST2_DATA_COLLECTION.md)
 
 ## Which code runs where?
 
@@ -126,7 +126,7 @@ On macOS use `python3` in place of `python`. Open **http://127.0.0.1:8000/** in 
 
 The workspace shows both arms, the selected handle and a gripper detail. The inspector reports metres and XYZW quaternions. Both use +X right, +Y up and -Z forward. The raw-data panel shows the headset, both controllers, buttons, axes, sequence number and timing. Mouse mode keeps the left arm stationary. On the headset each hand controls its corresponding arm.
 
-The simulator uses the published OpenArm v1.0 joint origins, axes, limits and finger travel. Damped inverse kinematics solves for J1-J7. Forward kinematics places the links, palm and fingertips. When a pose is unreachable, the arm holds its last accepted configuration. Release, reposition and re-clutch to continue. The link graphics are schematic. This kinematic model omits contact, gravity, collision response and motor dynamics. The lab rig's revision and calibration still need verification. [Pinned OpenArm model](https://github.com/enactic/openarm_description/blob/624e3ddadba10304f1fb3bb5df1f8c65977e3b25/assets/robot/openarm_v1.0/urdf/example/v1.urdf)
+The simulator uses the published OpenArm v1.0 joint origins, axes, limits and finger travel. Damped inverse kinematics solves for J1-J7. Forward kinematics places the links, palm and fingertips. When a pose is unreachable, the arm stays at its last accepted configuration. With Quest side-grip control, move the handle back within reach while still squeezing and the arm follows again. With the mouse, release, reposition and re-clutch. The link graphics are schematic. This kinematic model omits contact, gravity, collision response and motor dynamics. The lab rig's revision and calibration still need verification. [Pinned OpenArm model](https://github.com/enactic/openarm_description/blob/624e3ddadba10304f1fb3bb5df1f8c65977e3b25/assets/robot/openarm_v1.0/urdf/example/v1.urdf)
 
 ## How the two references work
 
@@ -144,11 +144,11 @@ tool_orientation = (current_hand_orientation × inverse(hand_orientation_at_grip
 
 Quaternion multiplication order matters. The default tool reference is a synthetic point between the jaws. Rotating a hand in place changes orientation around this point. Moving the head has no term in either tool calculation. The first sample on a clutch edge preserves the tool pose and closure. Grips engage at 0.65 and release at 0.35. Each side has its own grip, closure and anchors.
 
-A missing hand freezes that side. Loss of both hands, the headset, the input session or visibility latches a hold on both sides. So do a tracking-space reset and a gap of more than 0.4 seconds in delivered input. The inspector's arrival age is time since the server received a sample. The reported source lag is additional delay relative to the best observed browser/host clock offset. Neither value measures physical motion-to-display latency. The solver rejects targets outside its joint limits or reach.
+With real Quest input to the simulator, each tracked hand drives its arm while its side grip is pressed, whether recording or idle. If tracking or sample delivery is interrupted, the affected arm stays at its last accepted pose. When fresh tracking returns with the grip squeezed, the simulator anchors at the current hand and tool poses so the next movement starts there. The mouse simulator and physical gripper bench use the software hold. The inspector's arrival age is time since the server received a sample. The reported source lag is additional delay relative to the best observed browser/host clock offset. Neither value measures physical motion-to-display latency. The solver rejects targets outside its joint limits or reach.
 
 ## Quest Touch controls
 
-Only one input session controls the simulation at once. Use **Disconnect input** before switching between the mouse and headset. The workstation browser can observe a Quest session and resume after a hold.
+Only one input session controls the simulation at once. Use **Disconnect input** before switching between the mouse and headset. The workstation browser can observe a Quest session and displays **Grip engaged** when the selected hand drives its arm.
 
 The page reads viewer pose and each controller's grip pose in one stationary `local-floor` or `local` space. Inspect the actual profile and raw buttons on the borrowed controllers. The named mapping below uses the Oculus Touch profile. [WebXR Device API](https://www.w3.org/TR/webxr/) · [Oculus Touch v3 input profile](https://raw.githubusercontent.com/immersive-web/webxr-input-profiles/main/packages/registry/profiles/oculus/oculus-touch-v3.json)
 
@@ -158,9 +158,7 @@ The page reads viewer pose and each controller's grip pose in one stationary `lo
 | Index trigger while clutched, trigger mode | Squeeze to close continuously and ease off to open |
 | Vertical thumbstick while clutched, stick mode | Up opens, down closes, center holds the opening |
 | Rotate the clutched controller | Pitch, yaw and roll the gripper around its tool center |
-| Right A | Start an episode, or save and stay at its endpoint |
-| Hold left thumbstick click + tap right A during recording | With side grips released, save and return the simulated arm joints to their trial-start positions |
-| Right B | Latch hold for both tools |
+| Right A | Start or save an episode. Held side grips continue to control the arms. |
 | Left X | Cycle overview, left wrist and right wrist |
 | Left Y | Insert an episode marker |
 | Headset | Look around without moving a tool |

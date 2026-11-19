@@ -194,7 +194,7 @@ class Hand:
         buttons = self.raw["buttons"]
         return len(buttons) >= 2 and buttons[1]["value"] > GRIP_OFF
 
-    def update(self, held, alignment, scale, gripper_mode, dt):
+    def update(self, held, alignment, scale, gripper_mode, dt, grip_only=False):
         if not self.usable or held:
             self.release()
             self.status = ("held" if held else "unmapped") if self.raw["pose"] else "untracked"
@@ -209,7 +209,7 @@ class Hand:
             self.status = "released"
             return
         if not self.clutched:
-            if not self.ready or grip < GRIP_ON:
+            if (not grip_only and not self.ready) or grip < GRIP_ON:
                 if self.status != "outside simulated reach":
                     self.status = "waiting for grip" if self.ready else "release grip"
                 return
@@ -226,10 +226,12 @@ class Hand:
         goal = tool_goal(difference(pose, self.anchor), self.tool_anchor, alignment, scale)
         goal["q"] = aligned(goal["q"], self.tool["q"])
         if not self.robot.solve(goal):
-            self.release()
+            if not grip_only:
+                self.release()
             self.status = "outside simulated reach"
             return
         self.tool = goal
+        self.status = "clutched"
 
         if gripper_mode == "stick":
             if stick is None:
@@ -273,6 +275,7 @@ class Teleop:
         self.session = self.seq = self.frame = self.head = None
         self.time_ms = self.arrival_s = self.clock_offset = self.source_lag = self.period = None
         self.visible = False
+        self.grip_only = False
         self.held = False
         self.reason = ""
         self.ack = 0
@@ -280,7 +283,7 @@ class Teleop:
 
     def _hold(self, reason):
         self.trial.cancel(reason)
-        self.held, self.reason = True, reason
+        self.held, self.reason = not self.grip_only, reason
         for hand in self.hands.values():
             hand.release()
             hand.status = "held" if hand.raw["pose"] else "untracked"
@@ -328,7 +331,7 @@ class Teleop:
         raw = self.hands["right"].raw
         return raw["profile"] in CONTROL_PROFILES and len(raw["buttons"]) > 5 and raw["buttons"][5]["pressed"]
 
-    def apply(self, data, now=None):
+    def apply(self, data, now=None, *, quest_simulation=False):
         """Consume one packet. Replays and out-of-order packets do not refresh its lifetime."""
         now = time.monotonic() if now is None else now
         self._expire(now)
@@ -339,11 +342,15 @@ class Teleop:
                 self._hold("invalid sample")
                 self._lose_tracking()
             raise
-        if sample["session"] != self.session:
-            self._start_session(sample["session"])
-        if self.seq is not None and (sample["seq"] <= self.seq or sample["time_ms"] < self.time_ms):
+        new_session = sample["session"] != self.session
+        if not new_session and self.seq is not None and (sample["seq"] <= self.seq or sample["time_ms"] < self.time_ms):
             return self.snapshot(now)
 
+        self.grip_only = quest_simulation and sample["frame"] in ("local", "local-floor")
+        if new_session:
+            self._start_session(sample["session"])
+        if self.grip_only:
+            self.held, self.reason = False, ""
         self.seq = sample["seq"]
         # Clamp long intervals and require advancement on both clocks. A gap,
         # duplicate, clock jump or a queued sample cannot integrate a large step.
@@ -359,7 +366,7 @@ class Teleop:
             invalid = "reference frame reset"
         elif not self.visible:
             invalid = "input hidden"
-        elif not self.view_valid:
+        elif not self.view_valid and not self.grip_only:
             invalid = "camera display unavailable"
         elif self.source_lag > self.timeout_s:
             invalid = "delayed input"
@@ -375,7 +382,7 @@ class Teleop:
         elif all(hand.raw["pose"] is None for hand in self.hands.values()):
             self._hold("controller tracking lost")
         events = self._events(sample["events"])
-        if self._b_pressed() or any(e["action"] == "hold" for e in events):
+        if not self.grip_only and (self._b_pressed() or any(e["action"] == "hold" for e in events)):
             self._hold("operator hold")
         self.trial.observe(self.hands, self.session)
         commands = [e["action"] for e in events if e["action"] in ("record", "finish_return")]
@@ -386,12 +393,12 @@ class Teleop:
                 self.trial.advance(self.hands, dt)
             if self.trial.path is None:
                 self.release_controls()
-        elif (self.trial.start is not None and commands) or "record" in commands[:-1]:
+        elif not self.grip_only and ((self.trial.start is not None and commands) or "record" in commands[:-1]):
             # A delayed packet can contain both the start edge and a later end edge.
             self.release_controls()
         else:
             for hand in self.hands.values():
-                hand.update(self.held, self.alignment, self.scale, self.gripper_mode, dt)
+                hand.update(self.held, self.alignment, self.scale, self.gripper_mode, dt, self.grip_only)
         return self._snapshot(now, True, events)
 
     def release_controls(self):
@@ -402,12 +409,14 @@ class Teleop:
                 hand.status = "held" if self.held else ("released" if hand.ready else "release grip")
 
     def finish_trial(self, return_requested):
-        self.release_controls()
+        if not self.grip_only:
+            self.release_controls()
         blocked = self.reason if self.held else ""
         self.trial.finish(self.hands, self.session, return_requested, blocked)
 
     def hold(self, reason="operator hold", now=None):
-        self._hold(reason)
+        if not self.grip_only:
+            self._hold(reason)
         return self.snapshot(now)
 
     def disconnect(self, now=None):
@@ -443,7 +452,7 @@ class Teleop:
                          "gripper_mode":self.gripper_mode, "trial_return":self.trial.result,
                          "view_valid":self.view_valid,
                          "frame": self.frame, "axes": "+X right, +Y up, -Z forward", "visible": self.visible,
-                         "accepted": accepted, "held": self.held, "reason": self.reason,
+                         "accepted": accepted, "grip_only": self.grip_only, "held": self.held, "reason": self.reason,
                          "head": self.head, "hands": {s: h.snapshot() for s, h in self.hands.items()},
                          "time_ms": self.time_ms, "arrival_s": self.arrival_s,
                          "age_s": None if self.arrival_s is None else max(0, now - self.arrival_s),

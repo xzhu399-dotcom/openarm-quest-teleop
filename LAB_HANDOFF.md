@@ -73,8 +73,9 @@ To check headset reachability, open a fresh Quest Browser tab and enter just `ht
 | --- | --- | --- |
 | Baseline and isolation | Release both grips, choose **Capture initial pose** in the workstation browser, tap **right A** to record. Keep the handles still as you turn your head. Then move only the released right handle about 5 cm beside a ruler. | Head and hand values change independently. Released hand motion changes the reported hand displacement while both tool targets hold. |
 | Arm and wrist | Hold the right side grip, move the right handle a few centimetres, then turn your wrist in place. Release, reposition and re-clutch. | The right target follows reachable movement and rotation. The left arm holds. Re-clutching starts from the existing tool pose. |
+| Tracking recovery | While squeezing the right side grip, briefly move that controller out of tracking, then bring it back and move a few centimetres. | The arm stays in place during tracking loss. Once the controller is tracked again, **Grip engaged** returns and the new hand movement drives the arm from its last pose. |
 | Gripper | Begin with the stick centered. While clutched, tilt the right stick down briefly, center it, and move the handle again. Tilt up to reopen. | The simulated aperture in mm decreases, holds during arm movement, and increases when requested. |
-| Save | Release both grips and tap **right A** again. | The terminal reports `Recording STOP`, a saved result and the episode ID. In a second trial, left stick **click** + right A after releasing both side grips also tests the simulated post-save arm return. |
+| Save | Release both grips and tap **right A** again. | The terminal reports `Recording STOP`, a saved result and the episode ID. The arms remain at the poses where you released the grips. |
 
 From a second terminal in the same checkout and Python environment, substitute the reported ID:
 

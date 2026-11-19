@@ -13,9 +13,10 @@ class Conflict(ValueError):
 
 
 class Station:
-    def __init__(self, episodes, gripper_mode="trigger", camera_config=None):
+    def __init__(self, episodes, gripper_mode="trigger", camera_config=None, trial_events=None):
         self.engine = Teleop(gripper_mode=gripper_mode)
-        self.recorder = Recorder(episodes, self.engine.snapshot()["hands"], camera_config=camera_config)
+        self.recorder = Recorder(episodes, self.engine.snapshot()["hands"],
+                                 camera_config=camera_config, trial_events=trial_events)
         self.lock = RLock()
         self.owner = None
         self.last_arrival = 0

@@ -2,7 +2,7 @@
 """Run the articulated OpenArm simulator locally, or use Quest controllers over HTTPS."""
 
 import argparse
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import hmac
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,6 +10,7 @@ from ipaddress import IPv4Address
 import json
 import math
 from pathlib import Path
+import queue
 import secrets
 import shutil
 import ssl
@@ -223,8 +224,11 @@ def main():
     parser.add_argument("--cameras", type=Path, metavar="CONFIG", help="Open the three OpenCV sources in this JSON file")
     parser.add_argument("--gripper-mode", choices=("trigger","stick"), default="trigger",
                         help="Use absolute index trigger position or thumbstick opening rate")
-    parser.add_argument("--terminal-view", action="store_true",
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--terminal-view", action="store_true",
                         help="Show the selected camera and handle positions in this terminal (requires OpenCV)")
+    output.add_argument("--pose-report", action="store_true",
+                        help="Print headset and hand poses, simulated targets and jaws, and trial starts/stops")
     parser.add_argument("--certfile", type=Path, help="Lab-trusted TLS certificate chain for the LAN IP (PEM)")
     parser.add_argument("--keyfile", type=Path, help="Private key for --certfile (PEM)")
     args = parser.parse_args()
@@ -236,20 +240,28 @@ def main():
         parser.error("Port must be in the range 0 through 65535.")
     if bool(args.certfile) != bool(args.keyfile) or (args.sim and args.certfile):
         parser.error("Provide --certfile and --keyfile together with --host.")
+    if args.pose_report and args.legacy:
+        parser.error("--pose-report needs the standard Quest page. Omit --legacy.")
     try:
         camera_config = None
         if args.cameras:
             from live_cameras import load_camera_config
             camera_config = load_camera_config(args.cameras)
-        with tempfile.TemporaryDirectory(prefix="quest-pose-") as directory:
+        with tempfile.TemporaryDirectory(prefix="quest-pose-") as directory, ExitStack() as observers:
             tls = None if args.sim else make_tls_context(host, directory, args.certfile, args.keyfile)
-            station = Station(args.episodes, gripper_mode=args.gripper_mode, camera_config=camera_config)
+            trial_events = queue.SimpleQueue() if args.pose_report else None
+            station = Station(args.episodes, gripper_mode=args.gripper_mode,
+                              camera_config=camera_config, trial_events=trial_events)
             try:
                 with make_server(host, port, station, args.legacy, tls) as server:
                     suffix = f"?key={server.token}" if tls else ""
                     url = f"{server.scheme}://{host}:{server.server_port}/{suffix}"
                     print(f"Open {url}", flush=True)
                     print(f"OpenArm robot simulation | {args.gripper_mode} gripper | Ctrl+C to stop", flush=True)
+                    if args.pose_report:
+                        from pose_report import pose_report
+                        # Let recorder.close() report an interrupted trial before the observer exits.
+                        observers.enter_context(pose_report(station, trial_events))
                     from terminal_view import terminal_view
                     display = terminal_view(station, url) if args.terminal_view else nullcontext()
                     with display:

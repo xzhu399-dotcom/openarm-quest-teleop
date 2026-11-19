@@ -150,8 +150,9 @@ class _Episode:
 class Recorder:
     """One worker writes every episode stream. Preview reads return the latest frame."""
 
-    def __init__(self, root, initial_hands=None, camera_config=None):
+    def __init__(self, root, initial_hands=None, camera_config=None, trial_events=None):
         self.root = Path(root)
+        self._trial_events = trial_events
         self._state = threading.Lock()
         self._api = threading.RLock()
         self._queue = queue.Queue(maxsize=544)
@@ -371,6 +372,8 @@ class Recorder:
                     self._active = None
                     self._last_status = committed_status
                     self._last_elapsed = (time.monotonic_ns()-ep.start_ns)/1e9
+                if self._trial_events is not None:
+                    self._trial_events.put(("STOP", ep.path.name, committed_status))
 
     def _error_during_capture(self, exc):
         with self._state:
@@ -407,6 +410,8 @@ class Recorder:
                         self._error, self._active, self._dropped = None, ep, 0
                         self._last_name = ep.path.name
                         self._last_status = None
+                    if self._trial_events is not None:
+                        self._trial_events.put(("START", ep.path.name, "recording"))
                     ep.row("events", {"host_monotonic_ns":ep.start_ns, "kind":"record_start",
                                       "details":{"camera":self._selected}})
                     self._capture(ep)

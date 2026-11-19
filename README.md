@@ -4,7 +4,7 @@ Use Quest Touch controllers to move a simulated OpenArm, see one of three robot-
 
 ## Run at the lab
 
-On the computer connected to the cameras, use a GitHub account with access to this private repository. Open a terminal and run these commands once.
+On the computer you will use with the Quest, use a GitHub account with access to this private repository. Open a terminal and run these commands once.
 
 ```sh
 git clone https://github.com/xzhu399-dotcom/openarm-quest-teleop.git
@@ -12,6 +12,32 @@ cd openarm-quest-teleop
 ```
 
 Run the receiver from the directory containing this README. Put the Quest 2 and workstation on the same LAN and allow incoming connections to the receiver (TCP 8443 by default). The headset runs the existing Meta Quest Browser.
+
+### Just a Quest 2 and a computer
+
+Run the receiver with `--pose-report` for a text readout of the headset, both controllers, grippers and recording events. It works without an arm, cameras or OpenCV. Use Python 3.9+ and OpenSSL for the default HTTPS pairing certificate.
+
+**macOS** (use the active network interface if it differs from `en0`)
+
+```sh
+python3 quest-pose/quest_pose_receiver.py --host "$(ipconfig getifaddr en0)" --pose-report --gripper-mode stick
+```
+
+**Windows PowerShell**
+
+```powershell
+ipconfig
+$labIP = Read-Host 'Enter the IPv4 address of the adapter on the Quest network'
+python quest-pose/quest_pose_receiver.py --host $labIP --pose-report --gripper-mode stick
+```
+
+1. Open the **complete printed HTTPS URL** in Meta Quest Browser, including `?key=...`, and select **Start Quest**. The terminal displays the latest input. You can also open the same URL in the computer's browser to observe or select **Capture initial pose**.
+2. Move one handle with its side grip released. Its position (XYZ, metres), orientation (quaternion XYZW) and change from its initial pose update. Hold the side grip and turn the same handle to change the **simulated tool target**. While gripping, tilt the thumbstick down to close or up to open. Center it to hold the displayed jaw opening in millimetres. That number comes from the simulated gripper.
+3. Tap **right A** to start recording, then tap **right A** again to stop and save. Check the start and stop messages, episode ID and final status in the terminal. Saved trials are under `episodes/<episode-id>/` and contain the Quest input, simulated robot data and synthetic camera views.
+
+For a rehearsal without the headset, run `python quest-pose/quest_pose_receiver.py --sim --pose-report --gripper-mode stick` and select **Simulate Quest with mouse** at the printed desktop URL. On macOS use `python3`. For an image inside the terminal, choose the `--terminal-view` workflow below.
+
+### With workstation cameras
 
 **1. Prepare the workstation.** The receiver needs Python 3.9 or later. Install OpenCV for live cameras and the terminal picture. Create the local camera configuration once.
 

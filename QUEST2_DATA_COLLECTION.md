@@ -31,6 +31,8 @@ The displayed millimetres describe the nominal simulator geometry. They do not m
 
 ## 1. Prepare the workstation and cameras
 
+**If you have only the Quest and a computer**, use the receiver's `--pose-report` mode. The Mac and Windows commands, HTTPS pairing steps and a short gripper test are in the [Quest-only quick start](README.md#just-a-quest-2-and-a-computer). You can skip the camera setup below. Move a handle with its side grip released to check its tracked XYZ and XYZW orientation, then clutch it to see the simulated tool target move. Tap **right A** twice, once to start and once to stop, and check the terminal for the episode ID and save result. This mode records synthetic camera views alongside your real Quest samples.
+
 Run the commands from the folder containing this guide. For mouse practice with synthetic cameras and a desktop browser, the following command needs only Python 3.9 or later.
 
 ```sh

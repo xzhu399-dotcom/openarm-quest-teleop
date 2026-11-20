@@ -7,20 +7,25 @@ encoder positions, not model-space zeroes. Protocol uses the existing tested Lin
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
+import errno
 import json
 import math
 import os
 from pathlib import Path
 import re
-import select
 import signal
 import struct
 import sys
 import tempfile
-import termios
 import time
-import tty
+
+if os.name == 'nt':
+    import msvcrt
+else:
+    import fcntl
+    import select
+    import termios
+    import tty
 
 from openarm_motor_test import Link, Limits, SessionLog, mit_frame, watchdog_ticks
 
@@ -32,6 +37,9 @@ HAND_SPEED_MAX = 10.0  # Test-program ceiling, not a certified mechanical limit.
 ARM_ACCEL = 2.5  # Reference acceleration, degrees/s²; J8 uses 5 degrees/s².
 KEY_LEASE = 0.18
 MAX_CYCLE = 0.2
+INTERRUPT_SIGNALS = tuple(getattr(signal, name) for name in
+                          ('SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT', 'SIGTSTP', 'SIGBREAK')
+                          if hasattr(signal, name))
 
 
 def finite(value):
@@ -56,7 +64,7 @@ def motor_speed(motor, speed):
 
 
 def load_config(path):
-    config = json.loads(Path(path).read_text(encoding='utf-8'))
+    config = json.loads(Path(path).read_text(encoding='utf-8-sig'))
     if config.get('version') != 1:
         raise ValueError('不支持的配置版本')
     serials = []
@@ -78,11 +86,22 @@ def load_config(path):
     return config
 
 
+def lock_file(file, blocking):
+    """Lock through this open file descriptor; closing it releases the lock."""
+    if os.name == 'nt':
+        # The CRT locks from the current offset and allows a range beyond EOF.
+        file.seek(0)
+        msvcrt.locking(file.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+    else:
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        fcntl.flock(file, flags)
+
+
 def save_pose(path, side, serial, name, pose, replace=False):
     # Lock/reload before merging, so recording the other arm cannot lose updates.
     path = Path(path).resolve()
-    with open(str(path) + '.lock', 'a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with open(str(path) + '.lock', 'a+b') as lock:
+        lock_file(lock, blocking=True)
         config = load_config(path)
         arm = config['arms'][side]
         if arm['serial'] != serial:
@@ -121,32 +140,46 @@ def read_pose(arm, name):
 def arm_lock(serial):
     folder = ROOT / '.openarm-cli-locks'
     folder.mkdir(exist_ok=True)
-    with open(folder / (serial + '.lock'), 'a') as lock:
+    with open(folder / (serial + '.lock'), 'a+b') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError('该手臂已有一个 CLI 会话，请先退出')
+            lock_file(lock, blocking=False)
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise
+            raise RuntimeError('该手臂已有一个 CLI 会话，请先退出') from exc
         yield
 
 
 @contextmanager
+def signal_handlers(handler):
+    old = {}
+    try:
+        for sig in INTERRUPT_SIGNALS:
+            old[sig] = signal.signal(sig, handler)
+        yield
+    finally:
+        for sig, previous in old.items():
+            signal.signal(sig, previous)
+
+
 def interrupt_handlers():
     def stop(signum, frame):
         raise KeyboardInterrupt
-    signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP)
-    old = {s: signal.signal(s, stop) for s in signals}
-    try:
-        yield
-    finally:
-        for sig, handler in old.items():
-            signal.signal(sig, handler)
+    return signal_handlers(stop)
 
 
 class Terminal:
     """Bounded cbreak input. Standard terminals do not report key-up events."""
-    def __enter__(self):
+    @staticmethod
+    def check_input():
+        if os.name == 'nt':
+            raise RuntimeError('Keyboard jog/play/console execution requires a POSIX terminal. '
+                               'For Quest control on Windows, start the Quest receiver.')
         if not sys.stdin.isatty():
             raise RuntimeError('运动控制需要交互式终端，不能通过管道或重定向运行')
+
+    def __enter__(self):
+        self.check_input()
         self.fd = sys.stdin.fileno()
         self.saved = termios.tcgetattr(self.fd)
         tty.setcbreak(self.fd)
@@ -466,20 +499,15 @@ class Session:
     def __exit__(self, exc_type, exc, tb):
         if exc:
             self.trace.record('failure', detail=str(exc), type=exc_type.__name__)
-        signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP)
-        old = {s: signal.signal(s, signal.SIG_IGN) for s in signals}
-        try:
-            ok = self.cleanup()
-        finally:
+        with signal_handlers(signal.SIG_IGN):
             try:
+                ok = self.cleanup()
+            finally:
                 self.link.close()
                 try:
                     self.trace.save()
                 except Exception as error:
                     print(f'日志保存失败：{error}', file=sys.stderr)
-            finally:
-                for sig, handler in old.items():
-                    signal.signal(sig, handler)
         if not ok and exc is None:
             raise RuntimeError('退出清理未完全成功，请检查失能/超时参数提示')
 
@@ -639,8 +667,7 @@ def main(argv=None):
             if not args.execute:
                 print('仅预览，未连接 USB。加 --execute 才会实际使能。')
                 return 0
-            if not sys.stdin.isatty():
-                raise RuntimeError('请在交互式终端执行')
+            Terminal.check_input()
             print('请支撑机械臂并保持急停可用；退出会失能。没有重力补偿或碰撞规划。')
             if not arm['limits_deg']:
                 print('尚未配置机械限位；编码范围不代表机械可转范围，请观察线束和关节。')

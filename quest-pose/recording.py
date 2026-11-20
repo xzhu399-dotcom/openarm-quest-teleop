@@ -125,10 +125,12 @@ class _Episode:
         try:
             for name, file in self.manifest["streams"].items():
                 self.streams[name] = self._lines(file)
+            camera_ids = list(camera_config["cameras"] if camera_config else CAMERAS)
             if camera_config:
+                self.manifest["configured_cameras"] = camera_ids
                 self.manifest["camera_clock"] = ("Host monotonic timestamp immediately after OpenCV read. "
                     "file source_ns is media time where available, device exposure time is unknown")
-            for cam, label in CAMERAS.items():
+            for cam in camera_ids:
                 self.tables[cam] = self._lines(cam+".frames.jsonl")
                 if camera_config:
                     self.jpegs[cam] = self.resources.enter_context((self.path / (cam+".mjpg")).open("xb"))
@@ -138,7 +140,7 @@ class _Episode:
                 else:
                     self.animations[cam] = Animation(self.path / (cam+".png"))
                     self.resources.callback(self.animations[cam].close)
-                    spec = {"label":label, "source":"synthetic", "device_id":None, "video":cam+".png",
+                    spec = {"label":CAMERAS[cam], "source":"synthetic", "device_id":None, "video":cam+".png",
                             "format":"APNG", "width":WIDTH,"height":HEIGHT,"nominal_fps":FPS}
                 self.manifest["cameras"][cam] = {**spec, "timestamps":cam+".frames.jsonl", "frames":0,"dropped_frames":0}
             # A process exit before finish leaves an inspectable, interrupted episode.
@@ -243,7 +245,8 @@ class Recorder:
         self._last_elapsed = 0
         self._last_status = None
         self._error = None
-        self._selected = "overview"
+        self._camera_ids = tuple(camera_config["cameras"] if camera_config else CAMERAS)
+        self._selected = self._camera_ids[0]
         self._frames = {}
         self._robots = {side: hand["robot"] for side, hand in (initial_hands or {}).items() if hand.get("robot")}
         self._dropped = 0
@@ -512,7 +515,7 @@ class Recorder:
     def cycle_camera(self):
         with self._api:
             with self._state:
-                ids = list(CAMERAS)
+                ids = self._camera_ids
                 self._selected = ids[(ids.index(self._selected)+1) % len(ids)]
                 selected = self._selected
             self.event("view_requested", {"camera":selected})
@@ -610,7 +613,7 @@ class Recorder:
 
     def _open_hardware(self, start, task, model, physical_arm):
         if self._bank:
-            # CameraBank continues to acquire and buffer all three physical sources.
+            # CameraBank continues to acquire and buffer every configured source.
             return _Episode(start, task, model, self._camera_config, physical_arm=physical_arm)
         ready = queue.Queue(maxsize=1)
         def open_files():

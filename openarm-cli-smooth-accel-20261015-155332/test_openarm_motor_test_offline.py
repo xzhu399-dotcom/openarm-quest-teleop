@@ -129,7 +129,7 @@ class OfflineChecks(unittest.TestCase):
         self.assertTrue(all(cid == 1 for cid, _ in fake.sent))
 
     def test_source_parses_and_usb_is_deferred(self):
-        tree = ast.parse(PATH.read_text())
+        tree = ast.parse(PATH.read_text(encoding='utf-8'))
         top_imports = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
         self.assertFalse(any("usb" in ast.unparse(n) for n in top_imports))
         # Other diagnostic test modules may import PyUSB; check a fresh process.

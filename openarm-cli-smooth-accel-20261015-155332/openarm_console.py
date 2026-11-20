@@ -252,14 +252,9 @@ class ConsoleState:
 
 def stop_all(sessions):
     """Stop both arms before any slow confirmation/parameter restoration."""
-    signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP)
-    old = {s: signal.signal(s, signal.SIG_IGN) for s in signals}
-    try:
+    with cli.signal_handlers(signal.SIG_IGN):
         for session in sessions.values():
             session.request_disable()
-    finally:
-        for sig, handler in old.items():
-            signal.signal(sig, handler)
 
 
 def prepare_all(sessions, speed, hand_speed=None):
@@ -352,8 +347,7 @@ def run_console(args, config):
         print(HELP)
         print('仅预览，未连接 USB。加 --execute 才会使能全部参与关节。')
         return 0
-    if not sys.stdin.isatty():
-        raise RuntimeError('请在交互式终端执行')
+    cli.Terminal.check_input()
     print('请先支撑好机械臂，保持急停可用；通电保持不是机械锁，结束/故障会失能。')
     print('没有重力补偿或碰撞规划；尚未标定的机械范围需人工观察。')
     sessions = {}

@@ -5,13 +5,14 @@ from copy import deepcopy
 import json
 import math
 from pathlib import Path
+import sys
 import tempfile
 import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from robot_hardware import ArmCalibration, ArmControl, bind_session, load_calibration, physical_sessions
+from robot_hardware import ArmCalibration, ArmControl, bind_session, load_calibration, physical_sessions, robot_hardware
 from station import Station
 from test_station import quest_sample
 
@@ -131,7 +132,7 @@ class RobotTests(unittest.TestCase):
         self.assertEqual(arms["right"].model_joints(self.home),self.cal.model_joints(self.home))
         invalid = json.loads(self.calfile.read_text())
         invalid["arms"]["right"]["encoder_sign"][1] = 0
-        self.calfile.write_text(json.dumps(invalid))
+        self.calfile.write_text(json.dumps(invalid), encoding="utf-8-sig")
         with self.assertRaisesRegex(ValueError,"directions"):
             load_calibration(self.calfile)
         self.bus.meta[4]["mode"] = 0
@@ -154,8 +155,25 @@ class RobotTests(unittest.TestCase):
             self.assertGreater(state["feedback_host_ns"],0)
         self.assertTrue(self.bus.closed)
 
+    def test_gripper_endpoints_must_fit_measured_joint_limits(self):
+        self.bus.arm["limits_deg"]["8"] = [-3., 8.]
+        with self.assertRaisesRegex(ValueError, "J8.*measured encoder limits"):
+            bind_session(self.station, "right", self.cal, self.bus)
+        self.assertFalse(self.bus.attempted)
+
+    def test_readonly_bridge_on_supported_hosts_uses_local_driver(self):
+        for platform in ("win32", "linux", "darwin"):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform), \
+                    patch.dict(sys.modules, {"openarm_cli": self.cli}):
+                self.bus = MotorSession(self.cal, self.home)
+                with robot_hardware(self.station, self.calfile) as stop:
+                    self.assertFalse(stop.is_set())
+                    self.assertFalse(self.bus.attempted)
+                self.assertTrue(stop.is_set())
+                self.assertTrue(self.bus.closed)
+
     def test_first_enable_after_encoder_shift_is_refused(self):
-        with patch("builtins.input",return_value="ENABLE right ARM"), patch("robot_hardware.os.kill"):
+        with patch("builtins.input",return_value="ENABLE right ARM"):
             with self.assertRaisesRegex(RuntimeError,"moved before first enable"):
                 with physical_sessions(self.station,self.root,{"right":self.cal},self.cli,True):
                     self.send()
@@ -166,8 +184,8 @@ class RobotTests(unittest.TestCase):
         self.assertTrue(self.bus.closed)
 
     def test_drive_records_actual_can_writes_and_measured_return(self):
-        with patch("builtins.input",return_value="ENABLE right ARM"), patch("robot_hardware.os.kill") as signal_fault:
-            with physical_sessions(self.station,self.root,{"right":self.cal},self.cli,True):
+        with patch("builtins.input",return_value="ENABLE right ARM"):
+            with physical_sessions(self.station,self.root,{"right":self.cal},self.cli,True) as stop:
                 # An already squeezed controller cannot arm; a release is required.
                 self.send(grip=1.)
                 time.sleep(.07)
@@ -193,11 +211,11 @@ class RobotTests(unittest.TestCase):
                 self.assertTrue(any(r["command"]=="return" for r in rows))
                 self.assertTrue(all(r["start_ns"]<=r["host_monotonic_ns"]<=r["end_ns"] for r in rows))
                 self.assertTrue(all(len(r["measured_deg"])==8 and r["seq"] for r in rows))
-            signal_fault.assert_not_called()
+                self.assertFalse(stop.is_set())
         self.assertTrue(self.bus.closed)
 
     def test_lost_input_faults_drive_and_confirms_disable(self):
-        with patch("builtins.input",return_value="ENABLE right ARM"), patch("robot_hardware.os.kill"):
+        with patch("builtins.input",return_value="ENABLE right ARM"):
             with self.assertRaisesRegex(RuntimeError,"stopped"):
                 with physical_sessions(self.station,self.root,{"right":self.cal},self.cli,True):
                     self.send()
@@ -221,9 +239,9 @@ class RobotTests(unittest.TestCase):
         self.cli.Session = lambda arm,side,joints:buses[side]
         self.cli.load_config = lambda path:{"arms":{s:bus.arm for s,bus in buses.items()}}
         arms = {"right":self.cal,"left":left}
-        with patch("builtins.input", return_value="ENABLE left right ARM"), patch("robot_hardware.os.kill"):
+        with patch("builtins.input", return_value="ENABLE left right ARM"):
             with self.assertRaisesRegex(RuntimeError,"partial bus failure"):
-                with physical_sessions(self.station,self.root,arms,self.cli,True):
+                with physical_sessions(self.station,self.root,arms,self.cli,True) as stop:
                     self.send(left=(0.,0.),events=[{"id":1,"action":"record"}])
                     time.sleep(.07)
                     self.drive_until(lambda:all(h["enabled"] for h in self.station.physical_arm["arms"].values()),
@@ -245,6 +263,7 @@ class RobotTests(unittest.TestCase):
                         self.send(left=(0.,0.))
                         time.sleep(.01)
                     self.assertTrue(all(bus.disabled for bus in buses.values()))
+                    self.assertTrue(stop.wait(1))
             last = self.send(left=(0.,0.),events=[{"id":2,"action":"record"}])
         self.assertTrue(all(bus.closed for bus in buses.values()))
         rows = self.saved_rows(last["recording"]["episode"])

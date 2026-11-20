@@ -1,6 +1,6 @@
 # Collect a trial with Meta Quest 2 and OpenArm
 
-One trial is one episode directory. The workstation receives the Quest poses and buttons, computes simulated OpenArm joint and gripper motion, acquires the three cameras, and writes the episode. The headset and terminal follow one shared camera selection. You can practice the entire procedure using a mouse and synthetic cameras.
+One trial is one episode directory. The workstation receives the Quest poses and buttons, computes simulated OpenArm joint and gripper motion, captures the configured cameras, and writes the episode. The headset and terminal follow one shared camera selection. You can practice the entire procedure using a mouse and synthetic cameras.
 
 **Choose the trial mode** on the computer running the receiver. In both robot modes the headset shows the commanded OpenArm model alongside the camera panel, and the workstation displays measured joint angles.
 
@@ -14,38 +14,64 @@ The separate `--gripper-bench` workflow is available for testing one J8 by itsel
 
 ## Connect the Quest to a physical OpenArm
 
-1. **Use the Mac connected to the robot.** Plug each participating arm's USB CANable adapter and the overview and wrist cameras into that Mac. Join the Quest and Mac to a network that lets the headset reach the Mac. The Quest sends controller data over Wi-Fi, the Mac sends motor commands over USB/CAN, and the Mac returns the model and selected camera view to the headset. A Windows PC can keep its separate simulation or open the Mac's pairing URL as an observer.
-2. **Prepare the hardware on the Mac.** From the repo root, activate the project's Python environment. Install the hardware CLI requirements and OpenCV in that environment. Use the read-only USB inspection to match each physical side to its serial. Stop any other process using those adapters before starting the Quest receiver.
+Run the receiver **on the computer that has the arm's USB CANable adapter and cameras plugged in**. This can be Windows, Linux or macOS. If the cables go to a separate robot computer, clone or update this repository there. The Quest reaches that computer directly over Wi-Fi, and the robot computer can use Ethernet on the same reachable LAN. The other PC can open the robot computer's pairing URL to observe. The headset displays the commanded model and the selected camera. Encoder readings on the workstation show what the real joints did.
 
-   ```sh
-   python -m pip install -r openarm-cli-smooth-accel-20261015-155332/requirements.txt opencv-python
-   python openarm-cli-smooth-accel-20261015-155332/canable_inspect.py
+### Prepare the robot computer
+
+Use the repository root as the working directory. Install the USB libraries and OpenCV into the Python environment that runs the receiver, then run USB discovery. This check works with the motor power off. Stop other programs using the selected adapter before a hardware session.
+
+**Windows PowerShell** (fresh checkout)
+
+```powershell
+python -m venv .venv-lab
+$py = '.\.venv-lab\Scripts\python.exe'
+$motor = '.\openarm-cli-smooth-accel-20261015-155332'
+& $py -m pip install -r "$motor\requirements.txt" opencv-python
+& $py "$motor\canable_inspect.py"
+if (!(Test-Path "$motor\openarm_cli_config.json")) { Copy-Item "$motor\openarm_cli_config.template.json" "$motor\openarm_cli_config.json" }
+if (!(Test-Path .\quest-pose\robot-hardware.lab.json)) { Copy-Item .\quest-pose\robot-hardware.example.json .\quest-pose\robot-hardware.lab.json }
+if (!(Test-Path .\cameras.lab.json)) { Copy-Item .\quest-pose\cameras.example.json .\cameras.lab.json }
+```
+
+On the existing `C:\BME_META` lab installation, skip the environment creation and set `$py = 'C:\BME_META\.venv\Scripts\python.exe'` if that is the environment in use. The launcher looks for `.venv-lab` in the checkout first.
+
+**Linux or macOS** (from the checkout on the robot computer)
+
+```sh
+python3 -m venv .venv-lab
+. .venv-lab/bin/activate
+motor=openarm-cli-smooth-accel-20261015-155332
+python -m pip install -r "$motor/requirements.txt" opencv-python
+python "$motor/canable_inspect.py"
+test -e "$motor/openarm_cli_config.json" || cp "$motor/openarm_cli_config.template.json" "$motor/openarm_cli_config.json"
+test -e quest-pose/robot-hardware.lab.json || cp quest-pose/robot-hardware.example.json quest-pose/robot-hardware.lab.json
+test -e cameras.lab.json || cp quest-pose/cameras.example.json cameras.lab.json
+```
+
+1. **Identify each adapter.** Match its printed USB serial to the physical arm. The motor transport uses gs_usb adapters with USB ID `1d50:606f`. Discovery can list other USB IDs. An empty `adapters` list means this host cannot currently see a matching device. On Windows, check the USB data cable and the adapter's driver in Device Manager. Current candleLight firmware can select WinUSB automatically. On Linux, the user needs access to the selected USB device and exclusive use of its interface. If a ROS controller or kernel SocketCAN driver owns that interface, coordinate with the rig operator before changing its setup. This receiver opens USB directly. [candleLight firmware](https://github.com/candle-usb/candleLight_fw#known-issues) · [libusb Windows driver documentation](https://github.com/libusb/libusb/wiki/Windows#driver-installation)
+2. **Load the rig's measured calibration.** In `openarm_cli_config.json`, enter each connected side's serial and approved encoder limits in degrees. In `quest-pose/robot-hardware.lab.json`, configure `right`, `left`, or both. For each of J1–J7, supply the encoder reading at model zero and its direction (+1 or −1). Set the approved speed and include `gripper` only for a calibrated J8. Verify the arm revision, mounting and tool frame with the operator. The example values require actual measurements. [Calibration template](quest-pose/robot-hardware.example.json)
+3. **Map the cameras.** In `cameras.lab.json`, keep an entry for each attached view and give it a distinct device index or supported local device path. For a single webcam, keep just `"cameras": {"overview": {"device": 0}}` if it opens at index 0. With wrist cameras, add `left_wrist` and/or `right_wrist`. Check each actual image before recording. Omit the camera option on a rehearsal run to use synthetic images. [Camera template](quest-pose/cameras.example.json)
+
+### Pair, preview, drive and record
+
+1. **Preview encoder feedback with the motors disabled.** Support the robot in the intended starting pose. Follow the rig's power-up procedure so the motor electronics can answer CAN reads, with motor torque disabled. On Windows with both devices on **bm2roar**, run the command below. For another network replace `bm2roar` with its Windows network profile name or use `-LabIP` with the PC's address on the Quest LAN.
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Start-QuestSimulator.ps1 -NetworkName bm2roar -Mode robot-readonly -Cameras .\cameras.lab.json
    ```
 
-3. **Prepare the local configuration files.** The commands below copy templates only where a local file is missing. In the hardware CLI config, enter the lab's verified adapter serials and measured encoder limits in degrees for each connected joint. In the Quest calibration, configure `right`, `left`, or both. For J1 through J7, `encoder_zero_deg` gives the encoder reading at model zero, and `encoder_sign` gives the direction (+1 or −1). Set the lab-approved speed. Include `gripper` only for a calibrated J8. Check the model revision, mounting orientation, and tool frame against the actual robot. In the camera config assign the actual overview, left-wrist and right-wrist device IDs. [Arm calibration template](quest-pose/robot-hardware.example.json) · [Camera template](quest-pose/cameras.example.json)
+   On a **Linux or macOS robot computer**, find its reachable IPv4 address using `ip -br -4 addr` on Linux or `ipconfig getifaddr en0` on a Mac using Wi-Fi interface `en0`. Enter that address at the prompt.
 
    ```sh
-   cp -n openarm-cli-smooth-accel-20261015-155332/openarm_cli_config.template.json openarm-cli-smooth-accel-20261015-155332/openarm_cli_config.json
-   cp -n quest-pose/robot-hardware.example.json quest-pose/robot-hardware.lab.json
-   cp -n quest-pose/cameras.example.json cameras.lab.json
+   printf 'Robot computer LAN IPv4: '
+   read -r lab_ip
+   python quest-pose/quest_pose_receiver.py --host "$lab_ip" --port 8444 --mode robot-readonly --robot-calibration quest-pose/robot-hardware.lab.json --cameras cameras.lab.json --gripper-mode stick --pose-report
    ```
 
-   With the adapter serial configured, an arm with all eight motors installed can be checked independently using `python openarm-cli-smooth-accel-20261015-155332/openarm_cli.py --arm right status` (use `left` for the left arm). This reads the motor states before teleoperation.
-
-4. **Start with encoder preview.** Support the robot in the starting pose you want to return to. The receiver reads its stationary encoders and initializes the model from those measurements. Use the Mac's Wi-Fi interface in place of `en0` if needed. In **Quest Browser**, open the **entire HTTPS URL printed on this Mac** and select **Start Quest**. Open the same URL on the Mac to inspect the hardware readings. Compare the model to the resting arm, move a controller with its grip held, and check that the proposed movement and signs agree with the lab calibration while the physical encoders remain stationary. Use **left X** to check each camera's identity.
-
-   ```sh
-   lab_ip="$(ipconfig getifaddr en0)"
-   python quest-pose/quest_pose_receiver.py --host "$lab_ip" --mode robot-readonly --robot-calibration quest-pose/robot-hardware.lab.json --cameras cameras.lab.json --gripper-mode stick --pose-report
-   ```
-
-5. **Drive the calibrated arm under local supervision.** Save any trial and stop preview with Ctrl+C. Support the arm in the intended startup pose again, clear its workspace, and have the rig's physical stop within reach. Restart with the command below. Review the measured startup angles, enter the arming phrase in the Mac terminal, and open the newly printed URL in the headset. Keep the right controller tracked for **B**. Start with both grips released. Squeeze the configured side grip and move that controller a small distance, comparing the physical direction and encoder readings to the headset model. Releasing the grip holds the last motor reference. Right **B** requests a stop. A stopped or faulted drive session can require a fresh local launch.
-
-   ```sh
-   python quest-pose/quest_pose_receiver.py --host "$lab_ip" --mode robot-drive --robot-calibration quest-pose/robot-hardware.lab.json --cameras cameras.lab.json --gripper-mode stick --pose-report
-   ```
-
-6. **Collect and return.** Tap **right A** to start a trial. With the return path clear and the arm previously engaged, release both grips, then press **right A + left X together**. The Mac also has a **Return physical robot to startup pose** button. Each engaged arm returns J1–J7 to the encoder angles measured at the start of this drive session, preserving its jaw opening. Squeezing a grip cancels the return. To record the whole return, wait for the physical arm's **returned** status and check its encoders before tapping **A alone** to save. Wait for **Trial saved**, then replay the episode. Keep the arms mechanically supported for shutdown or a fault. The bridge bounds joint commands and checks encoder feedback. The operator must verify clearance along the path, including between the arms.
+2. **Open the complete, newly printed `https://…:8444/?key=…` URL in Meta Quest Browser**, including its key, then select **Start Quest**. The hardware session uses its own pairing URL each time it starts. A lab PC can keep its simulator open on 8443. If the headset times out, check that its network allows direct TCP connections to the robot computer on port 8444. With a side grip held, move that controller a small distance. Verify the proposed joint directions against the model and that the measured encoders stay at rest. Tap **left X** to identify each configured camera.
+3. **Switch to physical drive after preview passes.** Save any trial, stop the read-only terminal with Ctrl+C and support the arm in the pose you want it to return to. Clear its path and keep the rig's physical stop within reach. Run the same command with `robot-drive` in place of `robot-readonly`. Review the startup encoder angles, type the displayed arming phrase on the robot computer, and open its new **HTTPS** URL in Quest Browser. Start with both grips released. Squeeze the side grip for the configured arm, then make a small movement. Releasing it holds the last motor reference. Keep the right controller tracked. **Right B** requests a stop.
+4. **Record a trial and return.** Tap **right A** once to start recording. After engaging an arm, release both grips and press **right A + left X together** for return. The workstation also has a **Return physical robot to startup pose** button. Each engaged arm returns J1–J7 to the encoder angles measured when this drive session started and keeps its current jaw opening. Squeezing either grip cancels the return. To include the return in your recording, wait for **returned**, check the encoders, then tap **A alone** to save. Wait for **Trial saved**. Support the arms before stopping the receiver and check the terminal's disable result.
+5. **Verify the saved trial on the robot computer.** From the checkout run `python quest-pose/replay.py episodes/EPISODE_ID` with the episode ID printed at save. Use `& $py` in place of `python` in Windows PowerShell. Review the camera frames and encoder readings before accepting the trial.
 
 Physical timing uses the motor computer's monotonic clock. Each collected Quest sample has a session and sequence number. `robot_io.jsonl` identifies the source sample used in each motor cycle, the commands actually sent, and the measured encoder state and read times. `observations.jsonl` links each sample and motor cycle to the latest saved frame at or before its timestamp for **each** camera, with the frame's age or a missing value. Multiple commands can share a frame. Camera timestamps measure host delivery. The cameras are free-running and their exposure times can differ. Supply `--cameras` for lab images. Omitting it records synthetic views.
 
@@ -63,7 +89,7 @@ The table describes the simulated arms. For the optional J8 bench, follow the ph
 | Start a trial | Tap **right A** while idle | Starts recording and captures both simulated arms' starting joint positions. A does not engage a clutch. |
 | End the trial | Tap **right A** while recording | Saves the episode. Side-grip control continues. Release the grips to leave both arms at the endpoint. |
 | Return the simulated arms home | Release both side grips. Press **right A + left X** together, then release both buttons. The workstation also has a **Return arms to home** button. | Both arms move to their simulator startup joint positions while keeping their jaw openings. A recording in progress continues. Squeeze either grip to cancel. |
-| Switch the displayed camera | Tap **left X** | Cycles **Overview → Left wrist → Right wrist → Overview**. All three cameras continue recording. |
+| Switch the displayed camera | Tap **left X** | Cycles through the configured views in **Overview → Left wrist → Right wrist** order. Every configured camera continues recording. |
 | Mark a moment | Tap **left Y** during recording | Writes a timestamped marker, for example contact or a slip. |
 
 If tracking drops during simulated motion, the affected arm stays at its last pose. With its side grip still squeezed, fresh tracking anchors the handle there, and subsequent hand motion drives the arm again. Head movement changes the view. On the physical gripper bench, **right B** stops J8. The mapping is based on the Oculus Touch v3 WebXR profile. [Controller profile](https://raw.githubusercontent.com/immersive-web/webxr-input-profiles/main/packages/registry/profiles/oculus/oculus-touch-v3.json)
@@ -98,7 +124,7 @@ python -m pip install opencv-python
 test -e cameras.lab.json || cp quest-pose/cameras.example.json cameras.lab.json
 ```
 
-Connect the three cameras to the workstation. Edit `cameras.lab.json` so `overview`, `left_wrist` and `right_wrist` refer to **three different** OpenCV device indices or supported absolute device paths. The example indices 0, 1 and 2 are placeholders. For a file-based rehearsal, replace `"device": 0` in an entry with `"file": "overview.mp4"`. File paths are relative to the config file. The example requests 640 × 480 at 15 fps. Check the actual views and delivered frames on your setup.
+Connect the available cameras to the workstation. In `cameras.lab.json`, keep the attached views and give each its own OpenCV device index or supported absolute device path. The example indices 0, 1 and 2 are placeholders. For a file-based rehearsal, replace `"device": 0` in an entry with `"file": "overview.mp4"`. File paths are relative to the config file. The example requests 640 × 480 at 15 fps. Check the actual views and delivered frames on your setup.
 
 If macOS asks for camera access, allow the application running Python under **System Settings → Privacy & Security → Camera**. Close other applications that have exclusive access to the cameras. [Apple camera permissions](https://support.apple.com/guide/mac-help/control-access-to-the-camera-on-mac-mchlf6d108da/mac)
 
@@ -131,11 +157,11 @@ If the page does not load, check the LAN IP, firewall access for the receiver on
 
 ## 3. Check the camera view
 
-The workstation opens the three sources and serves one selected frame stream over the same authenticated HTTPS connection. The Quest draws that image on an immersive panel. In physical/file-camera mode the panel displays the chosen feed by itself, with camera and trial status. In synthetic mode the articulated robot also appears in stereo. The workstation browser and the `--terminal-view` picture follow the same selection. The terminal renders the actual image as colored character cells and reports the tracked handles. Enlarge the terminal for more detail.
+The workstation opens the configured sources and serves one selected frame stream over the same authenticated HTTPS connection. The Quest draws that image on an immersive panel. The panel shows the selected feed with camera and trial status. The articulated robot appears in stereo in hardware mode and during simulations that use synthetic views. The workstation browser and the `--terminal-view` picture follow the same selection. The terminal renders the actual image as colored character cells and reports the tracked handles. Enlarge the terminal for more detail.
 
-Before recording, tap **left X** through all three views. Cover or wave at one lens at a time to verify its label, orientation, and wrist side. Check that the image updates on the Quest **and** in the workstation terminal. If a camera stalls, the controller can still drive the simulated arm. Check the episode's camera status and restore the feed before collecting another demonstration. Preview age is measured from workstation receipt. The headset display and USB cameras still need an on-device latency check for your task.
+Before recording, tap **left X** through all configured views. Cover or wave at one lens at a time to verify its label, orientation, and wrist side. Check that the image updates on the Quest **and** in the workstation terminal. If a camera stalls, the controller can still drive the simulated arm. Check the episode's camera status and restore the feed before collecting another demonstration. Preview age is measured from workstation receipt. The headset display and USB cameras still need an on-device latency check for your task.
 
-For a lab latency measurement, point the selected camera at a flashing LED. With all three cameras recording, use a separate high-speed camera to film both the LED and its image through a headset lens. Count the frames between each pair of flashes and divide by the high-speed camera's frame rate. Report the median and 95th percentile across repeated flashes for each view.
+For a lab latency measurement, point the selected camera at a flashing LED. With the configured cameras recording, use a separate high-speed camera to film both the LED and its image through a headset lens. Count the frames between each pair of flashes and divide by the high-speed camera's frame rate. Report the median and 95th percentile across repeated flashes for each view.
 
 ## 4. Collect and finish one trial
 
@@ -156,7 +182,7 @@ python quest-pose/trial_metrics.py episodes/EPISODE_ID
 python quest-pose/replay.py episodes/EPISODE_ID --outcome success
 ```
 
-The first command checks the manifest, structured streams, and all three videos and their frame tables. The second exports one PNG per camera at or before the selected time when a frame is available. The trial-ending button marks the end of collection. After reviewing a completed recording, label its outcome `success`, `failure` or `aborted`.
+The first command checks the manifest, structured streams, and the configured videos and their frame tables. The second exports one PNG per camera at or before the selected time when a frame is available. The trial-ending button marks the end of collection. After reviewing a completed recording, label its outcome `success`, `failure` or `aborted`.
 
 Use the [trial metrics command](quest-pose/trial_metrics.py) to review the observed controller profiles, median and 95th-percentile receive intervals in milliseconds, sequence gaps and recorder drops. Per-hand results include simulated tool tracking error on accepted clutched targets, observed IK rejections and jaw opening range. For bench data, inspect `recorded_j8_bench` for the number of distinct encoder readings and their range in degrees. Receiver intervals describe the cadence of the recorded samples. Optical latency requires the separate measurement above.
 
@@ -166,7 +192,7 @@ Use the [trial metrics command](quest-pose/trial_metrics.py) to review the obser
 | `input.jsonl`, `actions.jsonl`, `feedback.jsonl` | Raw Quest input, requested targets and simulated feedback. Bench feedback also carries a separate `physical_gripper` record with side, mode, target and measured J8 angles, and readback timestamp. |
 | `events.jsonl` | Trial boundaries, starting configuration, end choice, markers and camera switches |
 | `robot_io.jsonl`, `observations.jsonl` | Physical-arm bus cycles and the saved camera frame associated with each Quest input or bus cycle. See the physical-connection procedure above. |
-| `overview.mjpg`, `left_wrist.mjpg`, `right_wrist.mjpg` | Three independent full-color Motion JPEG streams when using devices or files. Synthetic camera recordings use animated PNGs. |
+| `overview.mjpg`, `left_wrist.mjpg`, `right_wrist.mjpg` | One full-color Motion JPEG stream per configured device or file source. Synthetic camera recordings use animated PNGs. |
 | `*.frames.jsonl` | Stream-specific indices, host timestamps and frame offsets. Align streams by time. Device exposure times and hardware synchronization are unknown. |
 
-The first lab run should verify the actual Touch button mapping, the camera-to-label assignment, successful replay of all three streams and an episode saved with **right A**. A simulation result establishes the software behavior. Physical grasp force, motor faults, collision clearance and the real robot's return path require separate commissioning.
+The first lab run should verify the actual Touch button mapping, the camera-to-label assignment, successful replay of every configured stream and an episode saved with **right A**. A simulation result establishes the software behavior. Physical grasp force, motor faults, collision clearance and the real robot's return path require separate commissioning.

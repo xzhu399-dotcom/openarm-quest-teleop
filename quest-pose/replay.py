@@ -108,8 +108,16 @@ def inspect_episode(directory, at=None, frame_dir=None):
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema") != 1 or manifest.get("simulated") is not True:
         raise ValueError("Expected a simulated OpenArm episode (schema 1)")
-    if set(manifest["cameras"]) != set(CAMERAS):
-        raise ValueError("Expected overview and both wrist cameras")
+    # Synthetic episodes and older OpenCV manifests always expected all three views.
+    expected = list(CAMERAS)
+    if manifest.get("camera_mode") == "opencv" and "configured_cameras" in manifest:
+        expected = manifest["configured_cameras"]
+        if (not isinstance(expected, list) or not expected
+                or any(not isinstance(cam, str) or cam not in CAMERAS for cam in expected)
+                or len(set(expected)) != len(expected)):
+            raise ValueError("Invalid configured camera list in manifest")
+    if not isinstance(manifest.get("cameras"), dict) or set(manifest["cameras"]) != set(expected):
+        raise ValueError("Expected camera streams for " + ", ".join(expected))
     if at is not None and (not math.isfinite(at) or at < 0):
         raise ValueError("Choose a finite, nonnegative replay time")
     if frame_dir and Path(frame_dir).resolve() == directory.resolve():

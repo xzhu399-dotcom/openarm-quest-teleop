@@ -1,6 +1,6 @@
 # OpenArm teleoperation and data collection with Meta Quest 2
 
-Use Quest Touch controllers to move a simulated OpenArm, watch a selected robot-mounted camera and record all three views. On the Mac connected to the robot, choose `--mode robot-readonly` to inspect physical encoders or `--mode robot-drive` for locally armed J1–J7 motion and optional J8 control. Both modes keep the simulated robot visible in the headset. The default is `--mode simulate`. [Connect, record and return the physical robot](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm)
+Use Quest Touch controllers to move an OpenArm and see the commanded robot model in the headset. The default mode is simulation. For hardware, run the receiver on the Windows, Linux or macOS computer cabled to the robot. Choose `robot-readonly` to preview movement and read the encoders, or `robot-drive` for locally armed J1–J7 motion and optional J8 control. Trials can record the robot state and one to three camera views. [Connect, record and return the physical robot](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm)
 
 **Taking this to a new lab computer?** Start with the [lab handoff](LAB_HANDOFF.md) for the fresh-clone procedure, real-Quest simulation check and physical gripper bench test.
 
@@ -16,6 +16,17 @@ cd openarm-quest-teleop
 ```
 
 Run the receiver from the directory containing this README. Put the Quest 2 and workstation on the same LAN and allow incoming connections to the receiver (TCP 8443 by default). The headset runs the existing Meta Quest Browser.
+
+### Connect a real arm on Windows or a separate robot computer
+
+1. Connect the arm's USB CANable adapter and camera(s) to the computer that will run the receiver. Run USB discovery there, match the serial to the physical side, and load that rig's measured calibration. On a separate Linux robot computer, use the Linux commands in the collection guide. [Robot computer setup](QUEST2_DATA_COLLECTION.md#prepare-the-robot-computer)
+2. On Windows, start **read-only** preview from the checkout after setup. The command uses the local `quest-pose/robot-hardware.lab.json` and the real camera sources in `cameras.lab.json`.
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Start-QuestSimulator.ps1 -NetworkName bm2roar -Mode robot-readonly -Cameras .\cameras.lab.json
+   ```
+
+3. Open the **complete HTTPS link printed by this hardware session** in Meta Quest Browser and select **Start Quest**. Verify the encoder readings, movement directions and camera labels. To switch to drive, stop preview with Ctrl+C, relaunch with `-Mode robot-drive`, and enter the arming phrase at the robot computer. The Windows hardware launcher uses TCP 8444 and prints a fresh link on every start. The simulator uses its own address and PIN. [Controller buttons, physical return and saved data](QUEST2_DATA_COLLECTION.md#pair-preview-drive-and-record)
 
 ### Use a different Wi-Fi network
 
@@ -36,6 +47,8 @@ Run the receiver from the directory containing this README. Put the Quest 2 and 
 3. Open the **new HTTPS address printed by the launcher** in Quest Browser. Enter the printed PIN if prompted, select **Open simulator**, then **Start Quest**. The same Windows user on the same PC keeps the same PIN across networks. A new workstation or Windows account generates its own PIN on first launch.
 
 If the address opens on the PC but times out on the headset, check whether the Wi-Fi isolates devices. On a managed network, ask the administrator whether the headset can reach the PC on TCP 443 (pairing) and 8443 (simulator). The optional HTTP-to-HTTPS redirect uses TCP 80. On macOS, rerun the receiver command below with the active network interface and open its newly printed full HTTPS URL.
+
+For hardware on another Wi-Fi, run the hardware launch command on the robot computer using its new `-NetworkName` or `-LabIP` (Python CLI: `--host`). Open the new full `https://…:8444/?key=…` link in Quest Browser. The headset needs direct access to TCP 8444 on that computer.
 
 ### Share this private repository with a labmate
 
@@ -88,7 +101,7 @@ python -m venv .venv-teleop
 if (!(Test-Path cameras.lab.json)) { Copy-Item quest-pose/cameras.example.json cameras.lab.json }
 ```
 
-Edit `cameras.lab.json`. Give `overview`, `left_wrist` and `right_wrist` the device indices for the three cameras actually attached to the workstation. On macOS, grant Camera access to the app running Python. The [camera template](quest-pose/cameras.example.json) uses example indices.
+Edit `cameras.lab.json`. Keep the attached views from `overview`, `left_wrist` and `right_wrist` and set their actual device indices. For one webcam, keep a single entry such as `"overview": {"device": 0}`. On macOS, grant Camera access to the app running Python. [Camera template](quest-pose/cameras.example.json)
 
 **2. Start the receiver in a terminal.** On the Mac, use the interface with the LAN address reachable from the Quest. Substitute the interface name if it differs from `en0`.
 
@@ -105,16 +118,16 @@ $labIP = Read-Host 'Workstation LAN IPv4 address'
 
 The default launch uses OpenSSL to generate a short-lived HTTPS certificate. If the headset requires a trusted certificate, supply `--certfile lab-cert.pem --keyfile lab-key.pem` using a certificate trusted by the headset and valid for that LAN IP. To rehearse before connecting cameras, omit `--cameras cameras.lab.json` to use synthetic views.
 
-**3. Pair and verify.** In Meta Quest Browser, open the **full HTTPS URL printed in the terminal**, including the port and `?key=...`. Select **Start Quest**. Open the same URL on the workstation to see the inspector. With both grips released, move each handle and check that its reported position changes. Press **left X** three times to verify the camera labels and confirm that the headset and terminal show the same feed.
+**3. Pair and verify.** In Meta Quest Browser, open the **full HTTPS URL printed in the terminal**, including the port and `?key=...`. Select **Start Quest**. Open the same URL on the workstation to see the inspector. With both grips released, move each handle and check that its reported position changes. Use **left X** to check each configured camera label and confirm that the headset and terminal show the same feed.
 
-**4. Record one trial.** With grips released, select **Capture initial pose** on the workstation. Tap **right A** to start and check for **REC**. Hold the side grip to move or rotate that arm. With the side grip held, tilt the thumbstick up to open or down to close and let it center to preserve the opening. Release the side grips to leave both arms in place and tap **right A** to save. All three videos are recorded even while only one is displayed. Check the save status before starting the next trial. From the same Python environment, run `python quest-pose/replay.py episodes/EPISODE_ID` with the directory name shown by the station. Substitute the virtual environment’s Python path if necessary. [Full collection guide and button reference](QUEST2_DATA_COLLECTION.md)
+**4. Record one trial.** With grips released, select **Capture initial pose** on the workstation. Tap **right A** to start and check for **REC**. Hold the side grip to move or rotate that arm. With the side grip held, tilt the thumbstick up to open or down to close and let it center to preserve the opening. Release the side grips to leave both arms in place and tap **right A** to save. All configured cameras record throughout the trial. Check the save status before starting the next trial. From the same Python environment, run `python quest-pose/replay.py episodes/EPISODE_ID` with the directory name shown by the station. Substitute the virtual environment’s Python path if necessary. [Full collection guide and button reference](QUEST2_DATA_COLLECTION.md)
 
 ## Which code runs where?
 
 | Role | Folder and entry points | Responsibility |
 | --- | --- | --- |
 | Physical robot control on the Mac | [OpenArm hardware CLI](openarm-cli-smooth-accel-20261015-155332/), [openarm_cli.py](openarm-cli-smooth-accel-20261015-155332/openarm_cli.py), [openarm_motor_test.py](openarm-cli-smooth-accel-20261015-155332/openarm_motor_test.py) | The console controls J1–J7 and the J8 gripper through the arm’s USB CANable adapter. |
-| Quest → physical arm on the Mac | [Full-arm bridge](quest-pose/robot_hardware.py), [calibration template](quest-pose/robot-hardware.example.json) | Connects the configured sides, reads encoder feedback, bounds motor commands, and returns engaged arms to the measured startup pose. |
+| Quest → physical arm on Windows, Linux or macOS | [Full-arm bridge](quest-pose/robot_hardware.py), [calibration template](quest-pose/robot-hardware.example.json) | Connects the configured sides, reads encoder feedback, bounds motor commands, and returns engaged arms to the measured startup pose. |
 | Meta Quest input and display | [quest-pose/xr.js](quest-pose/xr.js), [app.js](quest-pose/app.js), [index.html](quest-pose/index.html) | Browser code reads headset and controller poses, triggers, face buttons and thumbsticks, sends the samples, and draws the selected camera in both eyes. |
 | Quest ↔ workstation communication | [quest-pose/quest_pose_receiver.py](quest-pose/quest_pose_receiver.py), [station.py](quest-pose/station.py) | The HTTPS receiver accepts `POST /sample` and `POST /control`. The workstation sends state and the selected camera back through `GET /state` and `GET /camera`. |
 | Workstation → simulated robot | [quest-pose/teleop.py](quest-pose/teleop.py), [robot_sim.py](quest-pose/robot_sim.py), [trial.py](quest-pose/trial.py) | The station feeds controller displacement and rotation into the teleoperation engine, which computes joint positions, jaw opening and the optional trial return. |
@@ -196,7 +209,7 @@ The page reads viewer pose and each controller's grip pose in one stationary `lo
 
 **To return the robot home**, release both side grips, press right **A** and left **X** so their presses overlap, then let go of both buttons. The arms move back smoothly and keep their current jaw openings. You can do this before, during, or after a trial. An active recording continues through the motion and the selected camera stays in place. From the workstation, **Return arms to home** does the same thing with a live input session. **Capture initial pose** sets the reference for measuring controller displacement. The robot's home pose is set when the simulator starts.
 
-Synthetic mode shows the robot in stereo and one selected synthetic camera panel. With `--cameras cameras.lab.json`, OpenCV acquires and records three physical cameras or local video files. The headset shows only the selected camera on its panel. Add `--terminal-view` to see the same feed and input telemetry inside the workstation terminal. Preview uses same-origin HTTPS image requests. End-to-end image latency still needs measurement on the lab rig.
+Synthetic mode shows the robot in stereo and one selected synthetic camera panel. With `--cameras cameras.lab.json`, OpenCV acquires and records the configured physical cameras or local video files. The headset shows only the selected camera on its panel. Add `--terminal-view` to see the same feed and input telemetry inside the workstation terminal. Preview uses same-origin HTTPS image requests. End-to-end image latency still needs measurement on the lab rig.
 
 The original terminal XYZ diagnostic remains available with `--legacy` on the same HTTPS command. Open its full pairing URL. This page uses the headset-relative viewer frame. Use the main simulator page for stationary-frame measurements and teleoperation.
 
@@ -234,11 +247,11 @@ Align streams by host monotonic timestamps. The frame index is local to each vid
 | File | Main functions |
 | --- | --- |
 | [app.js](quest-pose/app.js), [scene.js](quest-pose/scene.js) | `mouseInput`, `transmit`, `render` and `drawScene` generate the right-hand input, send the latest sample, and draw the handle, articulated arms and gripper. [index.html](quest-pose/index.html) provides the controls. |
-| [xr.js](quest-pose/xr.js), [xr_robot.js](quest-pose/xr_robot.js) | `startQuest`, `readHands` and `createPanel` read poses and buttons and draw the selected camera in both eyes. Synthetic mode also draws the articulated arms. |
+| [xr.js](quest-pose/xr.js), [xr_robot.js](quest-pose/xr_robot.js) | `startQuest`, `readHands` and `createPanel` read poses and buttons and draw the selected camera in both eyes. Hardware mode and synthetic camera mode also draw the articulated arms. |
 | [robot_sim.py](quest-pose/robot_sim.py) | `RobotArm.solve` applies bounded inverse kinematics. `forward` and `snapshot` produce seven joint origins, the achieved tool pose, finger positions and jaw opening. |
 | [teleop.py](quest-pose/teleop.py) | `Teleop.apply`, `Teleop.capture`, `Hand.update` and `difference` manage references, calculate translation and orientation differences, and update each tool and jaw. |
 | [trial.py](quest-pose/trial.py) | `Trial.begin` captures starting joints. `Trial.finish` and `Trial.advance` hold the endpoint or return the simulated joints after saving. |
-| [live_cameras.py](quest-pose/live_cameras.py), [terminal_view.py](quest-pose/terminal_view.py) | `CameraBank` acquires the three configured sources. `TerminalMonitor` renders the selected camera, input and trial status in the workstation terminal. |
+| [live_cameras.py](quest-pose/live_cameras.py), [terminal_view.py](quest-pose/terminal_view.py) | `CameraBank` acquires the configured sources. `TerminalMonitor` renders the selected camera, input and trial status in the workstation terminal. |
 | [quest_pose_receiver.py](quest-pose/quest_pose_receiver.py), [station.py](quest-pose/station.py) | `make_server`, `Station.sample` and `Station.control` serve the UI, enforce one input owner, dispatch events and coordinate recording. |
 | [recording.py](quest-pose/recording.py), [synthetic_cameras.py](quest-pose/synthetic_cameras.py), [replay.py](quest-pose/replay.py) | `Recorder.start/sample/finish`, `render` and `inspect_episode` write, generate and verify the episode data. |
 
@@ -252,6 +265,6 @@ The optional [browser gesture test](quest-pose/browser_smoke.py) drives a real C
 
 To repeat the separate [mock WebXR test](quest-pose/tests/webxr-smoke.html), run `python -m http.server 8765 --bind 127.0.0.1 --directory quest-pose` and open `http://127.0.0.1:8765/tests/webxr-smoke.html` in desktop Chrome. It exercises the production WebXR input code with generated poses, tracking loss, reference-space reset and both eye viewports in a real WebGL renderer.
 
-The supplied OpenArm CLI is in [its original directory](openarm-cli-smooth-accel-20261015-155332/README.txt). All 66 of its offline tests passed: 62 POSIX-compatible tests on Ubuntu and four mocked CANable-query tests on Windows. To run them together on the lab Mac, use the CLI archive's virtual environment, dependencies and offline test command in its README.
+The supplied OpenArm CLI is in [its original directory](openarm-cli-smooth-accel-20261015-155332/README.txt). With the USB dependencies installed, run `python -m unittest discover -s openarm-cli-smooth-accel-20261015-155332 -p 'test_*offline.py' -q` from the checkout to exercise the motor session with mocked adapters.
 
 Commission the physical bridge against the installed arm revision, base and tool-center transforms, joint order, encoder signs, offsets and measured limits. The templates leave rig-specific calibration values empty. [Hardware setup and first trial](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm)

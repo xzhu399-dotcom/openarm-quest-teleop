@@ -30,10 +30,12 @@ def load_camera_config(path):
             raise ValueError(f"Camera {key} must be an integer between {low} and {high}")
         config[key] = value
     inputs = data.get("cameras")
-    if not isinstance(inputs, dict) or set(inputs) != set(CAMERAS):
-        raise ValueError("Configure overview, left_wrist and right_wrist")
+    if not isinstance(inputs, dict) or not inputs or inputs.keys() - CAMERAS.keys():
+        raise ValueError("Configure at least one camera from overview, left_wrist and right_wrist")
     sources, used = {}, set()
     for cam, default_label in CAMERAS.items():
+        if cam not in inputs:
+            continue
         item = inputs[cam]
         if not isinstance(item, dict) or set(item) - {"label","device","file"} or ("file" in item) == ("device" in item):
             raise ValueError(f"{cam} requires one device or file")

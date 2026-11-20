@@ -30,6 +30,13 @@ def main():
     for device in devices:
         result = {"usb_id": f"{device.idVendor:04x}:{device.idProduct:04x}"}
         try:
+            try:
+                result["usb_serial"] = device.serial_number
+                if not result["usb_serial"]:
+                    result["serial_error"] = "Adapter has no USB serial descriptor"
+            except (usb.core.USBError, ValueError) as exc:
+                result["usb_serial"] = None
+                result["serial_error"] = str(exc)
             result["product"] = device.product
             # Only device-to-host vendor reads on endpoint 0. No reset,
             # configuration change, interface start, or bulk OUT transfer.

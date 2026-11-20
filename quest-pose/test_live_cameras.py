@@ -29,9 +29,10 @@ class LiveCameraTests(unittest.TestCase):
         self.path = self.root/"cameras.json"
         self.colors = dict(zip(CAMERAS, [(15,40,210), (15,210,40), (210,40,15)]))
 
-    def config(self, short=None):
+    def config(self, short=None, names=CAMERAS):
         cameras = {}
-        for cam,color in self.colors.items():
+        for cam in names:
+            color = self.colors[cam]
             file = self.root/(cam+".avi")
             writer = cv2.VideoWriter(str(file),cv2.VideoWriter_fourcc(*"MJPG"),20,(96,72))
             self.assertTrue(writer.isOpened())
@@ -78,6 +79,55 @@ class LiveCameraTests(unittest.TestCase):
             saved = list(rows(folder/(cam+".frames.jsonl")))
             latest = max(frame["frame_index"] for frame in saved if frame["host_monotonic_ns"] <= stamp)
             self.assertEqual(association["cameras"][cam]["frame_index"], latest)
+        # Earlier OpenCV manifests implicitly required all three views.
+        manifest_file = folder/"manifest.json"
+        legacy = json.loads(manifest_file.read_text())
+        legacy.pop("configured_cameras")
+        manifest_file.write_text(json.dumps(legacy))
+        self.assertEqual(set(inspect_episode(folder)["cameras"]), set(CAMERAS))
+        del legacy["cameras"]["left_wrist"]
+        manifest_file.write_text(json.dumps(legacy))
+        with self.assertRaisesRegex(ValueError, "Expected camera streams"):
+            inspect_episode(folder)
+
+    def test_single_camera_physical_episode_records_only_configured_view(self):
+        cam = "right_wrist"
+        self.open_station_cameras(self.config(names=[cam]))
+        self.assertEqual(self.rec.status()["selected_camera"], cam)
+        self.assertEqual(self.rec.cycle_camera()["selected_camera"], cam)
+        self.assertIsNone(self.rec.snapshot("overview"))
+        name = self.rec.start(physical_arm={"mode":"observe"})["episode"]
+        first = self.rec.snapshot()[1]["index"]
+        self.wait_for(lambda: self.rec.snapshot()[1]["index"] > first)
+        stamp = time.monotonic_ns()
+        sample = {"session":"quest", "seq":1}
+        self.rec.sample(sample, {"hands":{}}, stamp)
+        self.rec.robot_io({**sample, "arm":"right", "command":"observe", "measured_deg":[2.0]*7,
+                           "host_monotonic_ns":stamp}, self.rec.begin_robot_io(name))
+        self.assertEqual(self.rec.finish()["last_episode_status"], "saved")
+        folder = self.root / "episodes" / name
+        report = inspect_episode(folder, at=5)
+        self.assertEqual(set(report["cameras"]), {cam})
+        self.assertEqual([p.stem for p in folder.glob("*.mjpg")], [cam])
+        self.assertEqual(report["snapshot"]["robot_io"]["right"]["seq"], 1)
+        associations = list(rows(folder/"observations.jsonl"))
+        self.assertEqual([a["stream"] for a in associations], ["input", "robot_io"])
+        for a in associations:
+            self.assertEqual(set(a["cameras"]), {cam})
+            self.assertIsNotNone(a["cameras"][cam])
+        manifest_file = folder / "manifest.json"
+        manifest = json.loads(manifest_file.read_text())
+        self.assertEqual(manifest["configured_cameras"], [cam])
+        manifest["configured_cameras"].append("overview")
+        manifest_file.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "Expected camera streams"):
+            inspect_episode(folder)
+
+    def test_two_camera_preview_cycles_only_configured_views(self):
+        self.open_station_cameras(self.config(names=["overview", "right_wrist"]))
+        self.assertEqual(self.rec.snapshot()[1]["camera_id"], "overview")
+        self.assertEqual(self.rec.cycle_camera()["selected_camera"], "right_wrist")
+        self.assertEqual(self.rec.cycle_camera()["selected_camera"], "overview")
 
     def test_preview_switch_records_every_camera_and_exports_color(self):
         self.open_station_cameras(self.config())
@@ -138,6 +188,10 @@ class LiveCameraTests(unittest.TestCase):
 
     def test_config_validation(self):
         self.config()
+        for invalid in ({}, {"side": {"device": 0}}):
+            self.path.write_text(json.dumps({"cameras":invalid}))
+            with self.assertRaisesRegex(ValueError, "Configure at least one camera"):
+                load_camera_config(self.path)
         for key,new in [("device",True),("label","Invalid\nlabel"),("file","right_wrist.avi")]:
             data = copy.deepcopy(self.data)
             if key=="device":

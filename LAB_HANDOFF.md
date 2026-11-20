@@ -1,6 +1,8 @@
 # Lab handoff for the Quest 2 and OpenArm
 
-Use a real Quest 2 to test the simulated arms first. For full-arm hardware, use the [robot connection and recording procedure](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm). For a single-gripper bench test, sections 3 and 4 below use only J8 on the lab Mac. The gripper's encoder reports degrees and the model displays jaw opening in millimetres.
+Use a real Quest 2 to test the simulated arms first. For full-arm hardware, run the receiver on the Windows, Linux or macOS computer with the CANable adapters and cameras. [Robot connection and recording procedure](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm)
+
+Sections 3 and 4 cover the separate single-gripper bench test on the lab Mac. The gripper's encoder reports degrees and the model displays jaw opening in millimetres.
 
 ## Prompt to paste into Codex on the lab computer
 
@@ -10,6 +12,12 @@ Help me run the OpenArm + Meta Quest 2 lab handoff on this computer. Clone the p
 First run the real Quest receiver with --pose-report --gripper-mode stick and synthetic cameras. On Windows, use Start-QuestSimulator.ps1 and give me the printed address and simulator PIN. It defaults to bm2roar. If we're on another Wi-Fi, select its active Windows network profile with -NetworkName or its local IPv4 address with -LabIP. On another OS, use the receiver's printed pairing URL. Wait for me to open it in Meta Quest Browser and select Start Quest. Guide me through the released-hand, clutch, wrist rotation, jaw retention, and A start/stop checks. Record a trial and verify it with replay.py and trial_metrics.py. Report the observed controller profile, receipt timing, IK rejections, and simulated tracking error.
 
 Next help me test one physical J8 gripper on the Mac. Start with read-only USB discovery and encoder feedback. Use the lab's verified adapter side, J8 encoder limits, measured open/close test angles, and test speed. Ask me for any missing measurements. Run the read-only gripper bench and compare requested and measured encoder degrees. Before physical motion, wait for my on-site go-ahead. I will run the --execute-gripper command and type the local confirmation myself. Keep J1–J7 out of the test. Help me record and verify a small opening, closing, and hold. At the end, give me the episode IDs, results, and anything still unverified. Keep hardware IDs and trials local.
+```
+
+For a **full-arm hardware session** after the simulation check, use this prompt on the robot computer.
+
+```text
+Help me connect my Quest to the real OpenArm from the computer with the USB CANable adapters and cameras. Clone or update xzhu399-dotcom/openarm-quest-teleop and follow “Connect the Quest to a physical OpenArm” in QUEST2_DATA_COLLECTION.md. Identify the actual connected sides, adapter serials and available camera views, and use the rig's measured calibration. Start robot-readonly and give me its full HTTPS pairing URL. Help me check encoder readings and camera labels while the headset shows the model. Once I confirm the preview and rig are ready, give me the robot-drive command. I will arm it at the terminal. Guide me through a small side-grip movement, a right-A recording, an A+X return to the measured startup pose, and replay of the saved robot and camera data.
 ```
 
 ## 1. Prepare a fresh checkout
@@ -42,7 +50,7 @@ python -m venv .venv-lab
 .\.venv-lab\Scripts\python.exe quest-pose/trial_metrics.py examples/mouse-robot
 ```
 
-The receiver needs Python 3.9+ and OpenSSL for its default local HTTPS certificate. Optical cameras are optional. Install `opencv-python` in the environment only if using the real camera feeds, the image terminal, or their optional tests. Python reports skipped optional tests explicitly. Have the Quest Browser available and both Touch controllers awake. Windows can run the entire simulated-arm stage using the [PowerShell commands in the README](README.md#just-a-quest-2-and-a-computer). The supplied motor tools use POSIX facilities and the lab hardware procedure below uses the Mac.
+The receiver needs Python 3.9+ and OpenSSL for its default local HTTPS certificate. Install `opencv-python` for real camera feeds, the image terminal or their optional tests. Have Quest Browser available and both Touch controllers awake. Windows can run both the simulator and the full-arm receiver. Sections 3 and 4 use the Mac's single-gripper bench. [Windows and separate robot computer setup](QUEST2_DATA_COLLECTION.md#prepare-the-robot-computer)
 
 ## 2. Real Quest, simulated arms
 

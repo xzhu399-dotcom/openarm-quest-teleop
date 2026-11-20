@@ -88,14 +88,14 @@ class PoseHandler(BaseHTTPRequestHandler):
             link_key = parse_qs(urlsplit(self.path).query).get("key", [""])[0]
             if hmac.compare_digest(link_key.encode(), token.encode()):
                 self.reply(303, headers={"Location": "/", "Set-Cookie":
-                           f"station_key={token}; Path=/; Secure; HttpOnly; SameSite=Strict"})
+                           f"{self.server.cookie_name}={token}; Path=/; Secure; HttpOnly; SameSite=Strict"})
                 return False
         jar = cookies.SimpleCookie()
         try:
             jar.load(self.headers.get("Cookie", ""))
         except cookies.CookieError:
             pass
-        key = jar.get("station_key")
+        key = jar.get(self.server.cookie_name)
         if key and hmac.compare_digest(key.value.encode(), token.encode()):
             return True
         pairing_origin = getattr(self.server, "http_redirect_origin", None)
@@ -201,13 +201,15 @@ def make_tls_context(host, directory, certfile=None, keyfile=None):
     return context
 
 
-def make_server(host, port, station, legacy=False, tls=None):
+def make_server(host, port, station, legacy=False, tls=None, *, robot=False):
     server = (LocalHTTPSServer(host, port, PoseHandler, tls) if tls is not None
               else ThreadingHTTPServer((host, port), PoseHandler))
     try:
         server.station = station
         server.legacy = legacy
         server.token = secrets.token_urlsafe(18) if tls else None
+        # Cookies share a host across ports. The simulator PIN page uses station_key.
+        server.cookie_name = f"robot_key_{server.server_port}" if robot else "station_key"
         server.scheme = "https" if tls else "http"
         server.hosts = {f"{host}:{server.server_port}"}
         if IPv4Address(host).is_loopback:
@@ -220,6 +222,13 @@ def make_server(host, port, station, legacy=False, tls=None):
         raise
 
 
+def serve_robot(server, stop):
+    # A worker can fault before startup or while the headset is idle.
+    server.timeout = 0.05
+    while not stop.is_set():
+        server.handle_request()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -228,7 +237,7 @@ def main():
     parser.add_argument("--port", type=int, help="Set port, or use 0 to select a free port")
     parser.add_argument("--legacy", action="store_true", help="Serve the original headset-relative XYZ diagnostic page")
     parser.add_argument("--episodes", type=Path, default=Path("episodes"), help="Episode output directory")
-    parser.add_argument("--cameras", type=Path, metavar="CONFIG", help="Open the three OpenCV sources in this JSON file")
+    parser.add_argument("--cameras", type=Path, metavar="CONFIG", help="Open the configured OpenCV sources in this JSON file")
     parser.add_argument("--gripper-mode", choices=("trigger","stick"), default="trigger",
                         help="Use absolute index trigger position or thumbstick opening rate")
     parser.add_argument("--mode", choices=("simulate", "robot-readonly", "robot-drive"), default="simulate",
@@ -274,8 +283,6 @@ def main():
         parser.error("--pairing-code-file requires --host and the standard simulated-arm receiver.")
     if not args.pairing_code_file and (args.http_port is not None or args.pairing_port is not None):
         parser.error("--http-port and --pairing-port are options for --pairing-code-file.")
-    if robot_mode and sys.platform != "darwin":
-        parser.error("Run robot mode on the Mac connected to the CANable adapters. This computer can run --mode simulate.")
     try:
         camera_config = None
         if args.cameras:
@@ -287,7 +294,7 @@ def main():
             station = Station(args.episodes, gripper_mode=args.gripper_mode,
                               camera_config=camera_config, trial_events=trial_events)
             try:
-                with make_server(host, port, station, args.legacy, tls) as server, ExitStack() as pairing_pages:
+                with make_server(host, port, station, args.legacy, tls, robot=robot_mode) as server, ExitStack() as pairing_pages:
                     suffix = f"?key={server.token}" if tls else ""
                     url = f"{server.scheme}://{host}:{server.server_port}/{suffix}"
                     if args.pairing_code_file:
@@ -317,7 +324,8 @@ def main():
                             devices.enter_context(gripper_bench(station, args.gripper_bench, args.execute_gripper))
                         if robot_mode:
                             from robot_hardware import robot_hardware
-                            devices.enter_context(robot_hardware(station, args.robot_calibration, args.mode == "robot-drive"))
+                            robot_stop = devices.enter_context(robot_hardware(
+                                station, args.robot_calibration, args.mode == "robot-drive"))
                         if args.terminal_view:
                             from terminal_view import terminal_view
                             devices.enter_context(terminal_view(station, url))
@@ -325,7 +333,10 @@ def main():
                             from pose_report import pose_report
                             # Keep the reporter through recorder.close(), after local hardware prompts.
                             observers.enter_context(pose_report(station, trial_events))
-                        server.serve_forever()
+                        if robot_mode:
+                            serve_robot(server, robot_stop)
+                        else:
+                            server.serve_forever()
             finally:
                 station.close()
     except KeyboardInterrupt:

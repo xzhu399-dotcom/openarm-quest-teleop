@@ -460,19 +460,46 @@ class ReceiverTests(unittest.TestCase):
 class ReceiverModeTests(unittest.TestCase):
     def test_hardware_selection_through_receiver_entry_point(self):
         import quest_pose_receiver as receiver
+        stop = threading.Event()
+        stop.set()  # A worker can fault before the server starts listening for requests.
         for mode, execute in (("robot-readonly", False), ("robot-drive", True)):
             with self.subTest(mode=mode), TemporaryDirectory() as temp:
                 args = ["receiver", "--host", "127.0.0.1", "--port", "0", "--mode", mode,
                         "--robot-calibration", "lab.json", "--episodes", temp]
-                with patch.object(sys, "argv", args), patch.object(receiver, "sys", wraps=sys) as environment, \
+                with patch.object(sys, "argv", args), \
                         patch.object(receiver, "make_tls_context", return_value=None), \
-                        patch.object(receiver.ThreadingHTTPServer, "serve_forever"), \
-                        patch("robot_hardware.robot_hardware", return_value=nullcontext()) as bridge, \
+                        patch.object(receiver.ThreadingHTTPServer, "handle_request") as request, \
+                        patch("robot_hardware.robot_hardware", return_value=nullcontext(stop)) as bridge, \
                         redirect_stdout(io.StringIO()):
-                    environment.platform = "darwin"
                     receiver_main()
+                request.assert_not_called()
                 self.assertEqual(bridge.call_count, 1)
                 self.assertEqual(bridge.call_args.args[1:], (Path("lab.json"), execute))
+
+    def test_idle_robot_receiver_exits_after_worker_fault(self):
+        from quest_pose_receiver import serve_robot
+        stop = threading.Event()
+        with make_server("127.0.0.1", 0, None, robot=True) as server:
+            server.token = "sample-robot-token"
+            thread = threading.Thread(target=serve_robot, args=(server, stop), daemon=True)
+            thread.start()
+            conn = http.client.HTTPConnection(*server.server_address, timeout=2)
+            try:
+                conn.request("GET", "/?key=sample-robot-token")
+                response = conn.getresponse()
+                self.assertEqual(response.status, 303)
+                cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+                response.read()
+                self.assertFalse(cookie.startswith("station_key="))
+                conn.request("GET", "/", headers={"Cookie": f"station_key=simulator-token; {cookie}"})
+                response = conn.getresponse()
+                self.assertEqual(response.status, 200)
+                response.read()
+            finally:
+                conn.close()
+                stop.set()
+                thread.join(1)
+            self.assertFalse(thread.is_alive())
 
     def test_hardware_mode_requires_explicit_configuration_and_quest_session(self):
         for args in (["--host", "127.0.0.1", "--mode", "robot-drive"],

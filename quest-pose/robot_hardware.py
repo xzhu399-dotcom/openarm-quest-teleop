@@ -1,13 +1,11 @@
-"""Calibrated Quest joint teleoperation using the lab Mac's serial-bound OpenArm sessions."""
+"""Calibrated Quest joint teleoperation on the host with the CANable adapters."""
 
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import json
 import math
-import os
 from pathlib import Path
 import re
-import signal
 import sys
 import threading
 import time
@@ -51,7 +49,7 @@ class ArmCalibration:
 
 def load_calibration(path):
     path = Path(path).resolve()
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict) or set(data) != {"hardware_config", "arms"}:
         raise ValueError("Hardware calibration needs hardware_config and arms.")
     if not isinstance(data["hardware_config"], str) or not data["hardware_config"].strip():
@@ -94,7 +92,10 @@ def bind_session(station, side, cal, session):
         if meta["mode"] not in (1,2) or (j == 8 and meta["mode"] != 2):
             raise ValueError(f"{side} J{j}: unsupported motor mode {meta['mode']}.")
         if cal.gripper and j == 8:
-            lo, hi = sorted(math.radians(cal.gripper[k]) for k in ("open_deg","closed_deg"))
+            jaw_lo, jaw_hi = sorted(math.radians(cal.gripper[k]) for k in ("open_deg","closed_deg"))
+            if not lo <= jaw_lo < jaw_hi <= hi:
+                raise ValueError(f"{side} J8: gripper endpoints exceed the measured encoder limits.")
+            lo, hi = jaw_lo, jaw_hi
         if not meta["bounds"][0] <= lo < hi <= meta["bounds"][1]:
             raise ValueError(f"{side} J{j}: calibrated travel exceeds the drive's configured range.")
         if j in JOINTS:
@@ -404,15 +405,15 @@ def run_arm(side, station, cal, cli, session, initial, execute, stop, publish):
 @contextmanager
 def robot_hardware(station, path, execute=False):
     config_path, arms = load_calibration(path)
-    if sys.platform != "darwin" or threading.current_thread() is not threading.main_thread():
-        raise RuntimeError("Connect the CANable adapters to the lab Mac and run the receiver on its main thread.")
+    if sys.platform not in ("win32", "linux", "darwin") or threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("Run the receiver on the main thread of the Windows, Linux or macOS host connected to the CANable adapters.")
     if execute and not sys.stdin.isatty():
-        raise RuntimeError("Drive mode requires arming in the local Mac terminal.")
+        raise RuntimeError("Drive mode requires arming in the robot computer's interactive terminal.")
     sys.path.insert(0, str(HARDWARE))
     try:
         import openarm_cli as cli
-        with physical_sessions(station, config_path, arms, cli, execute):
-            yield
+        with physical_sessions(station, config_path, arms, cli, execute) as stop:
+            yield stop
     finally:
         sys.path.remove(str(HARDWARE))
 
@@ -439,11 +440,8 @@ def physical_sessions(station, config_path, arms, cli, execute):
             run_arm(side,station,arms[side],cli,sessions[side],initial[side],execute,stop,publish)
         except BaseException as exc:
             errors.append(exc)
-            notify = not stop.is_set()
             stop.set()
             publish(side, phase="fault", enabled=None if sessions[side].attempted else False, detail=str(exc))
-            if notify:
-                os.kill(os.getpid(),signal.SIGTERM)
         finally:
             if sessions[side].attempted:
                 sessions[side].request_disable()
@@ -470,7 +468,7 @@ def physical_sessions(station, config_path, arms, cli, execute):
                 thread = threading.Thread(target=worker, args=(side,), name=f"quest-arm-{side}")
                 thread.start()
                 workers.append(thread)
-            yield
+            yield stop
         finally:
             stop.set()
             for thread in workers:

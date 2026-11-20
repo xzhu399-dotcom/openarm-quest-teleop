@@ -50,7 +50,7 @@ class SessionLog:
         payload = dict(started_utc=self.started, motor=self.motor,
                        total_events=self.total_events, retained_events=len(self.events),
                        events=list(self.events))
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
         print(f'诊断日志：{path}')
 
 
@@ -124,14 +124,16 @@ def select_adapter(devices, serial=None):
             raise RuntimeError(f"只连接一块 CANable；当前发现 {len(devices)} 块")
         return devices[0]
     matches = []
+    serial_errors = []
     for device in devices:
         try:
             if device.serial_number == serial:
                 matches.append(device)
-        except Exception:
-            continue
+        except Exception as exc:
+            serial_errors.append(str(exc))
     if len(matches) != 1:
-        raise RuntimeError(f"序列号 {serial} 必须唯一匹配；当前匹配 {len(matches)} 块，拒绝选择其他设备")
+        detail = f" USB serial read errors: {', '.join(serial_errors)}" if serial_errors else ""
+        raise RuntimeError(f"序列号 {serial} 必须唯一匹配；当前匹配 {len(matches)} 块，拒绝选择其他设备" + detail)
     return matches[0]
 
 
@@ -147,7 +149,10 @@ class Link:
         self.trace = None
         self.decode = decode
         self.dev = None
+        self.start_attempted = False
         backend = usb.backend.libusb1.get_backend(find_library=libusb_package.find_library)
+        if backend is None:
+            raise RuntimeError("Bundled libusb could not be loaded")
         devices = list(usb.core.find(find_all=True, backend=backend,
                                     idVendor=0x1D50, idProduct=0x606F))
         try:
@@ -157,12 +162,20 @@ class Link:
                 if device is not self.dev:
                     usb.util.dispose_resources(device)
         try:
+            try:
+                usb.util.claim_interface(self.dev, 0)
+            except usb.core.USBError as exc:
+                raise RuntimeError(
+                    f"Cannot claim CANable {serial or ''} interface 0: {exc}. "
+                    "Check exclusive access, USB permissions and the adapter's driver."
+                ) from exc
             caps = struct.unpack("<10I", bytes(self.dev.ctrl_transfer(
                 0xC1, 4, 0, 0, 40, timeout=100)))
             self.ctrl(0, struct.pack("<I", 0xBEEF))
             self.ctrl(2, struct.pack("<II", 0, 0))
             self.drain()
             self.ctrl(1, struct.pack("<5I", *timing(caps, 1000000)))
+            self.start_attempted = True
             self.ctrl(2, struct.pack("<II", 1, 0))
         except BaseException:
             self.close()
@@ -244,7 +257,8 @@ class Link:
     def close(self):
         if self.dev is not None:
             try:
-                self.ctrl(2, struct.pack("<II", 0, 0))
+                if self.start_attempted:
+                    self.ctrl(2, struct.pack("<II", 0, 0))
             except Exception as exc:
                 print(f"无法停止适配器：{exc}", file=sys.stderr)
             finally:

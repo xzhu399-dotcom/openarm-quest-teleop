@@ -11,12 +11,12 @@ from unittest.mock import Mock, patch
 
 import openarm_cli as cli
 import openarm_console as console
-from test_openarm_cli_offline import FakeLink
+from test_openarm_cli_offline import FakeLink, use_test_config
 
 
 class ConsoleChecks(unittest.TestCase):
     def setUp(self):
-        self.config = copy.deepcopy(cli.load_config(cli.CONFIG))
+        self.config = use_test_config(self)
         self.links = {side: FakeLink() for side in ('left', 'right')}
         self.clock = [0.0]
         def link_for(serial):
@@ -108,7 +108,7 @@ class ConsoleChecks(unittest.TestCase):
     def test_preflight_no_reply_names_arm_and_never_enables(self):
         errors = io.StringIO()
         with patch.object(cli, 'arm_lock', side_effect=lambda serial: nullcontext()), \
-                patch.object(cli.sys.stdin, 'isatty', return_value=True), \
+                patch.object(cli.Terminal, 'check_input'), \
                 patch.object(self.links['left'], 'param', side_effect=RuntimeError('Motor 1, register 7: no reply')), \
                 redirect_stderr(errors):
             result = cli.main(['--arm', 'both', 'console', '--execute'])

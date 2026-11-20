@@ -6,16 +6,31 @@ import json
 import math
 import os
 from pathlib import Path
-import pty
 import struct
+import subprocess
+import sys
 import tempfile
-import termios
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+if os.name == 'posix':
+    import pty
+    import termios
+
 import openarm_cli as cli
 from openarm_motor_test import select_adapter
+
+
+def use_test_config(test):
+    folder = tempfile.TemporaryDirectory()
+    test.addCleanup(folder.cleanup)
+    path = Path(folder.name) / 'fixture.json'
+    path.write_bytes(Path(__file__).with_name('openarm_cli_config.template.json').read_bytes())
+    config = patch.object(cli, 'CONFIG', path)
+    config.start()
+    test.addCleanup(config.stop)
+    return cli.load_config(path)
 
 
 class Device:
@@ -68,7 +83,7 @@ class FakeLink:
 
 class CliChecks(unittest.TestCase):
     def setUp(self):
-        self.config = cli.load_config(cli.CONFIG)
+        self.config = use_test_config(self)
         self.arm = copy.deepcopy(self.config['arms']['left'])
         self.fake = FakeLink()
         for patcher in (patch.object(cli, 'Link', return_value=self.fake),
@@ -99,6 +114,52 @@ class CliChecks(unittest.TestCase):
 
     def test_motion_preview_never_connects(self):
         self.assertEqual(cli.main(['--arm', 'left', 'jog', '--joint', '4', '--speed', '2']), 0)
+        cli.Link.assert_not_called()
+
+    def test_windows_utf8_bom_config(self):
+        cli.CONFIG.write_text(json.dumps(self.config), encoding='utf-8-sig')
+        self.assertEqual(cli.load_config(cli.CONFIG), self.config)
+
+    def test_serial_lock_excludes_other_processes_and_releases_on_exit(self):
+        child = """
+import sys
+from pathlib import Path
+import openarm_cli as cli
+cli.ROOT = Path(sys.argv[1])
+try:
+    with cli.arm_lock(sys.argv[2]):
+        pass
+except RuntimeError:
+    sys.exit(9)
+"""
+        def try_lock(root, serial):
+            return subprocess.run([sys.executable, '-c', child, root, serial],
+                                  cwd=Path(cli.__file__).parent, timeout=10).returncode
+
+        with tempfile.TemporaryDirectory() as root, patch.object(cli, 'ROOT', Path(root)):
+            with cli.arm_lock('left-test'):
+                self.assertEqual(try_lock(root, 'left-test'), 9)
+                self.assertEqual(try_lock(root, 'right-test'), 0)
+            self.assertEqual(try_lock(root, 'left-test'), 0)
+
+    def test_interrupt_disables_closes_and_restores_native_handlers(self):
+        old = {s: cli.signal.getsignal(s) for s in cli.INTERRUPT_SIGNALS}
+        with self.assertRaises(KeyboardInterrupt), cli.interrupt_handlers():
+            with cli.Session(self.arm, 'left', (1,)) as session:
+                session.start(1)
+                cli.signal.raise_signal(cli.signal.SIGINT)
+        self.assertFalse(self.fake.enabled)
+        self.assertTrue(self.fake.closed)
+        self.assertEqual(self.fake.timeouts[1], 0)
+        self.assertEqual({s: cli.signal.getsignal(s) for s in old}, old)
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows terminal restriction')
+    def test_keyboard_execute_rejected_before_usb_on_windows(self):
+        for command in (['jog', '--joint', '1'], ['console']):
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                self.assertEqual(cli.main(['--arm', 'left', *command, '--execute']), 1)
+            self.assertIn('POSIX terminal', errors.getvalue())
         cli.Link.assert_not_called()
 
     def test_only_hand_joint_accepts_faster_jog_preview(self):
@@ -278,7 +339,7 @@ class CliChecks(unittest.TestCase):
     def test_pose_save_preserves_other_arm_and_requires_explicit_replace(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'poses.json'
-            path.write_text(json.dumps(self.config))
+            path.write_text(json.dumps(self.config), encoding='utf-8')
             cli.save_pose(path, 'left', self.arm['serial'], 'vertical', self.pose())
             updated = cli.load_config(path)
             self.assertEqual(updated['arms']['right'], self.config['arms']['right'])
@@ -313,6 +374,7 @@ class CliChecks(unittest.TestCase):
         self.assertIn('动作完成，正在保持', output.getvalue())
         self.assertFalse(self.fake.enabled)
 
+    @unittest.skipUnless(os.name == 'posix', 'requires a POSIX pseudoterminal')
     def test_terminal_reads_keys_and_restores_settings_on_error(self):
         master, slave = pty.openpty()
         try:

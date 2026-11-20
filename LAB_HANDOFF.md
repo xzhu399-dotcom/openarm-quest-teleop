@@ -1,6 +1,6 @@
 # Lab handoff for the Quest 2 and OpenArm
 
-Use a real Quest 2 to test the simulated arms first. The physical test uses **one gripper motor, J8**, on the lab Mac. J1–J7 stay outside the Quest hardware controller. The gripper's encoder reports degrees. The arm model's jaw display reports simulated millimetres.
+Use a real Quest 2 to test the simulated arms first. For full-arm hardware, use the [robot connection and recording procedure](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm). For a single-gripper bench test, sections 3 and 4 below use only J8 on the lab Mac. The gripper's encoder reports degrees and the model displays jaw opening in millimetres.
 
 ## Prompt to paste into Codex on the lab computer
 
@@ -147,4 +147,4 @@ python quest-pose/quest_pose_receiver.py --host "$lab_ip" --gripper-mode stick -
 
 To check **right B** on the real rig, first save the movement trial. With the supported rig supervised, the operator can press B after J8 has been enabled, then verify the bench exits and the driver confirms disable. Resume physical tests by starting a fresh bench session. An unconfirmed disable belongs in the lab report as a failed check.
 
-The physical encoder snapshot lives in `feedback.jsonl` under `physical_gripper`, with its own host timestamp. The simulated tool, joints and jaw retain their original fields. The local hardware trace is in the motor tools' `motor-test-logs/` directory. Save-and-return restores simulated arm joints. This bench does not command a physical return path or measure real TCP pose. Full physical J1–J7 teleoperation is a further commissioning task requiring the rig's joint mapping, zero/signs, limits, base/tool calibration and a validated hardware controller.
+The J8 bench records the encoder snapshot in `feedback.jsonl` under `physical_gripper`, with its own host timestamp. The simulated tool, joints and jaw retain their original fields. The motor tools also write a local hardware trace. For J1–J7 teleoperation, select the full-arm robot mode and follow the calibration and physical return checks. [Full-arm procedure](QUEST2_DATA_COLLECTION.md#connect-the-quest-to-a-physical-openarm)

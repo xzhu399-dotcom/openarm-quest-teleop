@@ -69,6 +69,9 @@ class PoseHandler(BaseHTTPRequestHandler):
     def json(self, data):
         self.reply(200, json.dumps(data, allow_nan=False, separators=(",", ":")).encode())
 
+    def station_json(self, state):
+        self.json(dict(state, local_controls=self.client_address[0] == self.server.server_address[0]))
+
     def authorized(self):
         host = self.headers.get("Host", "")
         if host not in self.server.hosts:
@@ -108,7 +111,7 @@ class PoseHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             if path == "/state":
-                self.json(self.server.station.state())
+                self.station_json(self.server.station.state())
             elif path == "/camera":
                 frame = self.server.station.recorder.snapshot()
                 if frame is None:
@@ -164,7 +167,7 @@ class PoseHandler(BaseHTTPRequestHandler):
             else:
                 local = self.client_address[0] == self.server.server_address[0]
                 result = self.server.station.control(data, local=local)
-            self.json(result)
+            self.station_json(result)
         except Conflict as error:
             self.problem(409, str(error))
         except PermissionError as error:
@@ -228,6 +231,10 @@ def main():
     parser.add_argument("--cameras", type=Path, metavar="CONFIG", help="Open the three OpenCV sources in this JSON file")
     parser.add_argument("--gripper-mode", choices=("trigger","stick"), default="trigger",
                         help="Use absolute index trigger position or thumbstick opening rate")
+    parser.add_argument("--mode", choices=("simulate", "robot-readonly", "robot-drive"), default="simulate",
+                        help="Select simulation, physical encoder preview, or locally armed physical drive")
+    parser.add_argument("--robot-calibration", type=Path, metavar="FILE",
+                        help="Local calibrated arm configuration for either robot mode")
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--terminal-view", action="store_true",
                         help="Show the selected camera and handle positions in this terminal (requires OpenCV)")
@@ -258,10 +265,17 @@ def main():
         parser.error("--execute-gripper requires --gripper-bench CALIBRATION.")
     if args.gripper_bench and (args.sim or args.legacy or args.terminal_view):
         parser.error("The physical gripper bench requires --host, the standard Quest page, and a text terminal.")
-    if args.pairing_code_file and (args.sim or args.legacy or args.gripper_bench):
+    robot_mode = args.mode != "simulate"
+    if robot_mode != bool(args.robot_calibration):
+        parser.error("Choose --mode robot-readonly or robot-drive together with --robot-calibration FILE.")
+    if robot_mode and (not args.host or args.legacy or args.gripper_bench or args.execute_gripper):
+        parser.error("Robot mode requires --host and the standard Quest page, with the full-arm bridge as sole motor owner.")
+    if args.pairing_code_file and (args.sim or args.legacy or args.gripper_bench or robot_mode):
         parser.error("--pairing-code-file requires --host and the standard simulated-arm receiver.")
     if not args.pairing_code_file and (args.http_port is not None or args.pairing_port is not None):
         parser.error("--http-port and --pairing-port are options for --pairing-code-file.")
+    if robot_mode and sys.platform != "darwin":
+        parser.error("Run robot mode on the Mac connected to the CANable adapters. This computer can run --mode simulate.")
     try:
         camera_config = None
         if args.cameras:
@@ -291,18 +305,26 @@ def main():
                     scope = "Simulated arms and jaws"
                     if args.gripper_bench:
                         scope = "Physical J8 execution requested" if args.execute_gripper else "Read-only physical J8 test"
+                    if robot_mode:
+                        scope = f"Simulated arm display with physical OpenArm ({args.mode})"
                     print(f"{scope} | {args.gripper_mode} gripper | Ctrl+C to stop", flush=True)
-                    if args.pose_report:
-                        from pose_report import pose_report
-                        # Let recorder.close() report an interrupted trial before the observer exits.
-                        observers.enter_context(pose_report(station, trial_events))
+                    if robot_mode:
+                        print("Camera recording: " + ("configured OpenCV sources" if camera_config
+                              else "synthetic views (supply --cameras for lab camera readings)"), flush=True)
                     with ExitStack() as devices:
-                        if args.terminal_view:
-                            from terminal_view import terminal_view
-                            devices.enter_context(terminal_view(station, url))
                         if args.gripper_bench:
                             from gripper_bench import gripper_bench
                             devices.enter_context(gripper_bench(station, args.gripper_bench, args.execute_gripper))
+                        if robot_mode:
+                            from robot_hardware import robot_hardware
+                            devices.enter_context(robot_hardware(station, args.robot_calibration, args.mode == "robot-drive"))
+                        if args.terminal_view:
+                            from terminal_view import terminal_view
+                            devices.enter_context(terminal_view(station, url))
+                        if args.pose_report:
+                            from pose_report import pose_report
+                            # Keep the reporter through recorder.close(), after local hardware prompts.
+                            observers.enter_context(pose_report(station, trial_events))
                         server.serve_forever()
             finally:
                 station.close()

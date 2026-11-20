@@ -278,6 +278,7 @@ class Session:
         self.arm, self.side, self.joints = arm, side, tuple(joints)
         self.link = None
         self.meta, self.states, self.refs = {}, {}, {}
+        self.feedback_ns = {}
         self.changed, self.attempted = [], []
         self.trace = SessionLog(side + '-' + '-'.join(map(str, joints)))
         self.speed = 1.0
@@ -317,6 +318,7 @@ class Session:
     def read_states(self, deadline=None):
         for i in self.joints:
             self.states[i] = self.link.state(i, self.meta[i]['reply'], self.meta[i]['limits'])
+            self.feedback_ns[i] = time.monotonic_ns()
             if deadline is not None and time.monotonic() > deadline:
                 raise RuntimeError('整组反馈延迟超过 200 ms')
         return self.states
@@ -334,7 +336,7 @@ class Session:
                 raise RuntimeError(f'J{i} 未静止；支撑稳定后重试')
         self.refs = {i: self.states[i]['q'] for i in self.joints}
 
-    def prepare(self, speed):
+    def prepare(self, speed, on_preload=None):
         """Prepare while disabled; all arms must finish this before any enable."""
         self.speed = speed
         self.stationary()
@@ -346,15 +348,23 @@ class Session:
                 self.link.set_watchdog(i, watchdog_ticks(500))
         self.stationary()
         for i in self.joints:
+            stamp = time.monotonic_ns()
             self.link.send(*frame_for(i, self.meta[i], self.refs[i], speed, 0))
+            if on_preload is not None:
+                on_preload(i, self.refs[i], stamp)
 
-    def enable_prepared(self):
+    def enable_prepared(self, guard=None, on_enabled=None):
         begun = time.monotonic()
         for i in self.joints:
+            if guard is not None:
+                guard()
             if time.monotonic() - begun > MAX_CYCLE:
                 raise RuntimeError('多关节使能超时')
             self.attempted.append(i)
+            stamp = time.monotonic_ns()
             self.link.send(i, b'\xff' * 7 + b'\xfc')
+            if on_enabled is not None:
+                on_enabled(i, stamp)
         self.trace.record('enabled_joints', joints=list(self.attempted), speed=self.speed)
 
     def start(self, speed):
@@ -362,9 +372,13 @@ class Session:
         self.enable_prepared()
 
     def cycle(self, targets, speed, factor):
-        speeds = {i: motor_speed(i, speed) for i in self.joints}
         begun = time.monotonic()
         self.read_states(deadline=begun + MAX_CYCLE)
+        self.send_references(targets, speed, factor, begun)
+
+    def send_references(self, targets, speed, factor, begun, select_target=None, on_sent=None):
+        """Send against this cycle's readbacks. A released external clutch may hold the last reference."""
+        speeds = {i: motor_speed(i, speed) for i in self.joints}
         if time.monotonic() - begun > MAX_CYCLE:
             raise RuntimeError('整组反馈延迟超过 200 ms')
         for i in self.joints:
@@ -379,8 +393,14 @@ class Session:
         for i in self.joints:
             if time.monotonic() - begun > MAX_CYCLE:
                 raise RuntimeError('整组控制延迟超过 200 ms')
-            self.link.send(*frame_for(i, self.meta[i], targets[i], speeds[i], factor))
-        self.refs = dict(targets)
+            target = targets[i] if select_target is None else select_target(i, targets[i], self.refs[i])
+            if target != targets[i] and target != self.refs[i]:
+                raise RuntimeError("A command guard may only hold the previous reference.")
+            sent_ns = time.monotonic_ns()
+            self.link.send(*frame_for(i, self.meta[i], target, speeds[i], factor))
+            self.refs[i] = target
+            if on_sent is not None:
+                on_sent(i, target, sent_ns)
 
     def verify_pose(self, pose):
         targets = {int(i): q for i, q in pose['positions_rad'].items()}

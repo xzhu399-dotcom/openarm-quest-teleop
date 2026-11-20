@@ -65,7 +65,8 @@
         if (mode === gl.TRIANGLE_STRIP && window.questFixture.samplePanel) {
           const [x] = gl.getParameter(gl.VIEWPORT);
           const pixel = new Uint8Array(4);
-          gl.readPixels(x+64,48,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
+          const [px,py] = window.questFixture.panelPoint || [64,48];
+          gl.readPixels(x+px,py,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
           window.questFixture.panelPixels[x === 0 ? 'left' : 'right'] = Array.from(pixel);
           if (x !== 0) window.questFixture.samplePanel = false;
         }

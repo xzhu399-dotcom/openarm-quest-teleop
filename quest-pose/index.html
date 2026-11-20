@@ -11,11 +11,11 @@
 <body>
   <header class="bar">
     <div class="brand"><span class="brand-symbol" aria-hidden="true">⌁</span> OpenArm <span class="division">/</span> <span class="brand-page">Teleoperation studio</span></div>
-    <span class="sim-label"><i></i> <span id="hardware-status">Simulation</span></span>
+    <span class="sim-label"><i></i> <span id="hardware-status">Connecting to receiver</span></span>
   </header>
   <main>
     <div class="title-row">
-      <div><h1>Robot simulator</h1><p>Drive the simulated OpenArm with a Quest controller or a mouse.</p></div>
+      <div><h1 id="workspace-title">Robot simulator</h1><p id="workspace-description">Drive the simulated OpenArm with a Quest controller or a mouse.</p></div>
       <div class="buttons input-buttons">
         <button class="primary" id="mouse-start">Simulate Quest with mouse</button>
         <button id="xr-start" disabled title="Open the HTTPS page in the Quest browser">Start Quest</button>
@@ -70,6 +70,7 @@
         <div class="panel-heading"><div><h2>Pose inspector</h2><span id="inspect-label" class="sub">Right hand</span></div><span class="pill" id="timing">No samples</span></div>
         <div class="table-wrap"><table><thead><tr><th scope="col">Reference</th><th scope="col">X <small>m</small></th><th scope="col">Y <small>m</small></th><th scope="col">Z <small>m</small></th><th scope="col">Quaternion <small>XYZW</small></th></tr></thead><tbody id="pose-table"></tbody></table></div>
         <div id="robot-joints" class="inputs"></div>
+        <div id="encoder-joints" class="inputs" hidden></div>
         <div id="inputs" class="inputs"></div>
         <details><summary>Raw tracking and button data</summary><pre id="raw">Waiting for input</pre></details>
       </section>

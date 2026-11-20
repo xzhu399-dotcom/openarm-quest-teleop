@@ -19,6 +19,8 @@ def report_lines(state):
     rec = state["recording"]
     if rec["active"]:
         recording = f"Recording ACTIVE  {rec['episode']}  {rec['elapsed_s']:.1f} s"
+    elif rec.get("finalizing"):
+        recording = f"Recording SAVING  {rec['episode']}"
     elif rec["episode"]:
         recording = f"Recording IDLE  last {rec['episode']} ({rec['last_episode_status']})"
     else:
@@ -32,6 +34,13 @@ def report_lines(state):
     lines = [f"{recording} | {motion} | {destination} return {result['status']}",
              f"Frame {frame} | sample {state['seq']} | {state['gripper_mode']} gripper",
              f"Headset  {format_pose(state['head'])}"]
+    physical = state.get("physical_arm")
+    if physical:
+        for side, arm in physical["arms"].items():
+            lines.append(f"Physical {side} | {physical['mode']} | {arm['phase']} | enabled {arm['enabled']}"
+                         f" | encoder deg {arm.get('measured_deg')} | target deg {arm.get('target_deg')}")
+        if physical.get("error"):
+            lines.append(f"Robot error: {physical['error']}")
     bench = state.get("gripper_bench")
     if bench:
         def degrees(value):

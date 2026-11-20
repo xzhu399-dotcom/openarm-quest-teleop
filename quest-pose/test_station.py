@@ -1,15 +1,18 @@
 """Exercise the same receiver endpoints used by the mouse and Quest pages."""
 
 import http.client
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
+import io
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
+import sys
 from unittest.mock import patch
 
-from quest_pose_receiver import make_server
+from quest_pose_receiver import main as receiver_main, make_server
 from replay import inspect_episode
 from station import Station
 from test_teleop import hand
@@ -92,6 +95,54 @@ class ReceiverTests(unittest.TestCase):
         released = self.ok("/sample", quest_sample(6, .20))
         self.assertFalse(released["hands"]["right"]["clutched"])
         self.assertEqual(released["hands"]["right"]["tool"], after["hands"]["right"]["tool"])
+
+    def test_physical_home_request_is_explicit_fresh_and_bound_to_the_controller(self):
+        self.station.physical_arm = {"mode":"drive","arms":{"right":{"enabled":True}}, "error":None}
+
+        def packet(seq, event_id=None, age_ms=0):
+            raw = quest_sample(seq)
+            for side, source in (("right","xr-1"), ("left","xr-2")):
+                raw["hands"][side] = dict(raw["hands"]["right"], handedness=side, source=source,
+                                          target_ray_mode="tracked-pointer")
+            if event_id:
+                raw["events"] = [{"id": event_id, "action": "restore_robot_initial",
+                                  "time_ms": raw["time_ms"] - age_ms}]
+            return raw
+
+        self.assertEqual(self.request("/sample", sample(1))[0], 409)
+        state = self.ok("/sample", packet(1))
+        self.assertFalse(state["grip_only"])
+        self.assertTrue(state["local_controls"])
+        self.assertEqual(self.request("/control", {"action":"restore_initial"})[0], 409)
+        with self.assertRaises(PermissionError):
+            self.station.control({"action":"restore_robot_initial", "session":state["session"]}, local=False)
+        delayed = self.ok("/sample", packet(2, 1, 500))
+        self.assertIsNone(delayed["hardware_return"])
+        self.assertIn("expired", delayed["hardware_return_notice"])
+        accepted = self.ok("/sample", packet(3, 2))
+        intent = accepted["hardware_return"]
+        self.assertEqual(intent["sources"], {"left":"xr-2","right":"xr-1"})
+        self.assertEqual(self.ok("/sample", packet(4, 2))["hardware_return"], intent)
+        self.station.physical_arm["arms"]["right"]["phase"] = "returning"
+        self.assertEqual(self.ok("/sample", packet(5, 3))["hardware_return"], intent)
+        changed = packet(6)
+        changed["hands"]["left"]["source"] = "xr-3"
+        self.assertIsNone(self.ok("/sample", changed)["hardware_return"])
+        self.station.physical_arm = dict(self.station.physical_arm, mode="shadow")
+        self.assertEqual(self.request("/control", {"action":"restore_robot_initial"})[0], 409)
+        self.assertIsNone(self.ok("/sample", packet(7, 4))["hardware_return"])
+
+    def test_disk_open_failure_allows_next_record_tap_to_start_a_new_hardware_trial(self):
+        self.station.physical_arm = {"mode":"shadow", "arms":{"right":{"enabled":False}}, "error":None}
+        with patch("recording._Episode", side_effect=OSError("disk unavailable")):
+            first = self.ok("/control", {"action":"record"})["recording"]["episode"]
+            deadline = time.monotonic() + 3
+            while self.station.recorder.status()["last_episode_status"] != "start_failed":
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+        second = self.ok("/control", {"action":"record"})["recording"]
+        self.assertTrue(second["active"])
+        self.assertNotEqual(first, second["episode"])
 
     def test_quest_reanchors_after_tracking_loss_and_reconnect_with_grip_down(self):
         self.ok("/sample", quest_sample(1, grip=1))
@@ -404,6 +455,35 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(status, 303)
         self.assertIn("HttpOnly", hdr["Set-Cookie"])
         self.assertEqual(self.request("/state", extra={"Cookie":"station_key=pairing-test-key"})[0], 200)
+
+
+class ReceiverModeTests(unittest.TestCase):
+    def test_hardware_selection_through_receiver_entry_point(self):
+        import quest_pose_receiver as receiver
+        for mode, execute in (("robot-readonly", False), ("robot-drive", True)):
+            with self.subTest(mode=mode), TemporaryDirectory() as temp:
+                args = ["receiver", "--host", "127.0.0.1", "--port", "0", "--mode", mode,
+                        "--robot-calibration", "lab.json", "--episodes", temp]
+                with patch.object(sys, "argv", args), patch.object(receiver, "sys", wraps=sys) as environment, \
+                        patch.object(receiver, "make_tls_context", return_value=None), \
+                        patch.object(receiver.ThreadingHTTPServer, "serve_forever"), \
+                        patch("robot_hardware.robot_hardware", return_value=nullcontext()) as bridge, \
+                        redirect_stdout(io.StringIO()):
+                    environment.platform = "darwin"
+                    receiver_main()
+                self.assertEqual(bridge.call_count, 1)
+                self.assertEqual(bridge.call_args.args[1:], (Path("lab.json"), execute))
+
+    def test_hardware_mode_requires_explicit_configuration_and_quest_session(self):
+        for args in (["--host", "127.0.0.1", "--mode", "robot-drive"],
+                     ["--sim", "--mode", "robot-drive", "--robot-calibration", "lab.json"],
+                     ["--host", "127.0.0.1", "--mode", "robot-drive", "--robot-calibration", "lab.json",
+                      "--pairing-code-file", "pin"],
+                     ["--host", "127.0.0.1", "--robot-calibration", "lab.json"]):
+            with self.subTest(args=args), patch.object(sys, "argv", ["receiver", *args]), \
+                    redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                receiver_main()
+            self.assertEqual(error.exception.code, 2)
 
 
 if __name__ == "__main__":

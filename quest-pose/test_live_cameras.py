@@ -9,7 +9,7 @@ import unittest
 
 from live_cameras import load_camera_config
 from recording import Recorder
-from replay import inspect_episode
+from replay import inspect_episode, rows
 from synthetic_cameras import CAMERAS
 
 
@@ -57,6 +57,27 @@ class LiveCameraTests(unittest.TestCase):
         while not fn():
             self.assertLess(time.monotonic(),deadline)
             time.sleep(.01)
+
+    def test_robot_command_links_all_three_saved_opencv_frames(self):
+        self.open_station_cameras(self.config())
+        name = self.rec.start(physical_arm={"mode":"observe"})["episode"]
+        start_indices = [self.rec.snapshot(cam)[1]["index"] for cam in CAMERAS]
+        self.wait_for(lambda: all(self.rec.snapshot(cam)[1]["index"] > first
+                                  for cam, first in zip(CAMERAS, start_indices)))
+        token = self.rec.begin_robot_io(name)
+        stamp = time.monotonic_ns()
+        self.rec.robot_io({"session":"xr","seq":5,"arm":"right","command":"observe",
+                           "host_monotonic_ns":stamp,"feedback_host_ns":stamp,
+                           "measured_deg":[4.0]*7,"target_deg":None}, token)
+        self.rec.finish()
+        folder = self.root/"episodes"/name
+        self.assertEqual(inspect_episode(folder)["streams"]["observations"], 1)
+        association = next(rows(folder/"observations.jsonl"))
+        self.assertEqual(association["seq"], 5)
+        for cam in CAMERAS:
+            saved = list(rows(folder/(cam+".frames.jsonl")))
+            latest = max(frame["frame_index"] for frame in saved if frame["host_monotonic_ns"] <= stamp)
+            self.assertEqual(association["cameras"][cam]["frame_index"], latest)
 
     def test_preview_switch_records_every_camera_and_exports_color(self):
         self.open_station_cameras(self.config())

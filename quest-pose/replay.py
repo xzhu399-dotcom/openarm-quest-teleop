@@ -10,7 +10,7 @@ import time
 import zlib
 from pathlib import Path
 
-from recording import write_manifest
+from recording import camera_observations, write_manifest
 from synthetic_cameras import CAMERAS, HEIGHT, SIGNATURE, WIDTH, still_image
 from live_cameras import require_opencv
 
@@ -120,12 +120,18 @@ def inspect_episode(directory, at=None, frame_dir=None):
     summary["camera_mode"] = manifest.get("camera_mode","synthetic")
     if "physical_gripper" in manifest:
         summary["physical_gripper"] = manifest["physical_gripper"]
+    if "physical_arm" in manifest:
+        summary["physical_arm"] = manifest["physical_arm"]
+        summary["missing_robot_io"] = manifest.get("missing_robot_io", 0)
     summary.update(dropped_input_records=manifest.get("dropped_input_records", 0),
                    streams={}, cameras={})
     # A hard process exit retains the initial manifest. Stream contents provide the counts.
     check_counts = manifest.get("end_host_ns") is not None
     snapshot = {"at_s":at, "action":None, "cameras":{}} if when is not None else None
-    for name in ("input", "actions", "feedback", "events"):
+    streams = ["input", "actions", "feedback", "events"]
+    if "robot_io" in manifest["streams"]:
+        streams.append("robot_io")
+    for name in streams:
         count = 0
         for row in rows(local_file(directory, manifest["streams"][name])):
             ns = row["host_monotonic_ns"]
@@ -133,6 +139,11 @@ def inspect_episode(directory, at=None, frame_dir=None):
                 raise ValueError(f"{name}: invalid host timestamp")
             if name == "actions" and when is not None and ns <= when:
                 snapshot["action"] = _pose_report(row, start)
+            if name == "robot_io" and when is not None and ns <= when:
+                arm = row["arm"]
+                latest = snapshot.setdefault("robot_io", {})
+                if arm not in latest or ns > latest[arm]["host_monotonic_ns"]:
+                    latest[arm] = row
             count += 1
         summary["streams"][name] = count
         if check_counts and count != manifest["counts"][name]:
@@ -190,6 +201,21 @@ def inspect_episode(directory, at=None, frame_dir=None):
                     stills[cam] = png.tobytes()
                 else:
                     stills[cam] = still_image(selected[1])
+    if "observations" in manifest["streams"]:
+        saved = rows(local_file(directory, manifest["streams"]["observations"]))
+        if check_counts:
+            expected = camera_observations(directory, manifest)
+            count = 0
+            for actual, reference in itertools.zip_longest(saved, expected):
+                if actual != reference:
+                    raise ValueError(f"observations: invalid command/camera reference at row {count}")
+                count += 1
+            if count != manifest["counts"]["observations"]:
+                raise ValueError("observations: manifest count mismatch")
+        else:
+            # A terminated process may not yet have finalized its frame associations.
+            count = sum(1 for _ in saved)
+        summary["streams"]["observations"] = count
     if stills:
         dest = Path(frame_dir)
         dest.mkdir(parents=True, exist_ok=True)

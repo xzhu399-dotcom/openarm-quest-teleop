@@ -1,0 +1,16 @@
+{
+  "hardware_config": "../openarm-cli-smooth-accel-20261015-155332/openarm_cli_config.json",
+  "arms": {
+    "right": {
+      "adapter_serial": "REPLACE_RIGHT_SERIAL",
+      "encoder_zero_deg": [null, null, null, null, null, null, null],
+      "encoder_sign": [null, null, null, null, null, null, null],
+      "max_speed_deg_s": null,
+      "gripper": {
+        "open_deg": null,
+        "closed_deg": null,
+        "max_speed_deg_s": null
+      }
+    }
+  }
+}

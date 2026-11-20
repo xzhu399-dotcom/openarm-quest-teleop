@@ -38,7 +38,7 @@ if ($busy.Count -eq $ports.Count -and $owners.Count -eq 1) {
     $command = [string]$process.CommandLine
     if ($command.IndexOf($receiverScript, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
         $command.IndexOf($codeFile, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-        $command -match '\s--pairing-code-file\s' -and $command -notmatch '\s--gripper-bench\s') {
+        $command -match '\s--pairing-code-file\s' -and $command -notmatch '\s(?:--gripper-bench\s|--mode[ =]robot-)') {
         Write-Output "Simulator already running. Open https://$LabIP/ in Quest Browser."
         if (Test-Path -LiteralPath $codeFile -PathType Leaf) {
             $savedCode = (Get-Content -Raw -LiteralPath $codeFile).Trim()

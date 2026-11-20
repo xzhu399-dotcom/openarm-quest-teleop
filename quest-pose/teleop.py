@@ -132,9 +132,13 @@ def parse_sample(data):
         raise ValueError("expected up to 64 button events")
     clean_events = []
     for event in events:
-        if not isinstance(event, dict) or event.get("action") not in ("record", "finish_return", "restore_initial", "hold", "view", "mark"):
+        if not isinstance(event, dict) or event.get("action") not in (
+                "record", "finish_return", "restore_initial", "restore_robot_initial", "hold", "view", "mark"):
             raise ValueError("invalid button event")
-        clean_events.append({"id": integer(event.get("id"), "event ID", 1), "action": event["action"]})
+        item = {"id": integer(event.get("id"), "event ID", 1), "action": event["action"]}
+        if item["action"] == "restore_robot_initial":
+            item["time_ms"] = number(event.get("time_ms"), "hardware return button timestamp", 0, 2**53)
+        clean_events.append(item)
     return {"session": session, "seq": integer(data.get("seq"), "sequence"),
             "time_ms": number(data.get("time_ms"), "source timestamp", 0, 2**53),
             "frame": frame, "visible": visible, "reset": reset, "view_valid":view_valid,

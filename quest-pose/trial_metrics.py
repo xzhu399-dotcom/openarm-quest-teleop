@@ -103,11 +103,19 @@ def trial_metrics(directory):
     verified = inspect_episode(directory)
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     streams = [rows(local_file(directory, manifest["streams"][name])) for name in ("input", "actions", "feedback")]
-    return {"episode": directory.name, "status": verified["status"], "model": verified["model"],
+    report = {"episode": directory.name, "status": verified["status"], "model": verified["model"],
             "recorded_input_samples": verified["streams"]["input"],
             "recorder_dropped_input_records": verified["dropped_input_records"],
             **summarize_samples(zip(*streams)),
             "physical_j1_j7_and_tcp_feedback": "unavailable"}
+    if "robot_io" in manifest["streams"]:
+        cycles = verified["streams"]["robot_io"]
+        count = sum(bool(row.get("measured_deg")) for row in
+                    rows(local_file(directory, manifest["streams"]["robot_io"])))
+        report["physical_j1_j7_and_tcp_feedback"] = {
+            "hardware_io_cycles": cycles, "cycles_with_encoder_readings": count,
+            "missing_io_cycles": verified["missing_robot_io"], "measured_tcp": "unavailable"}
+    return report
 
 
 def main(argv=None):

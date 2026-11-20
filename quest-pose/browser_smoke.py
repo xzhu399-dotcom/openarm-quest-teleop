@@ -536,17 +536,80 @@ def exercise_camera_workflow(client, address, station):
     return name
 
 
+def exercise_robot_ui(client, address, station):
+    """Use a mock encoder snapshot and real camera-file frames without a motor adapter."""
+    joints = list(range(1,8))
+    arm = {"phase":"waiting", "enabled":False, "joints":joints, "measured_deg":[12.5]*7}
+    station.physical_arm = {"mode":"shadow", "arms":{"right":arm}, "error":None}
+    fixture = Path(__file__).parent / "tests" / "quest-input-fixture.js"
+    client.call("Page.addScriptToEvaluateOnNewDocument", source=fixture.read_text(encoding="utf-8"))
+    client.call("Page.navigate", url=address)
+    wait_for(lambda: client.evaluate("document.getElementById('hardware-status')?.textContent.includes('Robot read-only')"),
+             "read-only hardware indicated")
+    client.click("xr-start")
+    wait_for(lambda: station.state()["hands"]["right"]["tracked"], "mock hardware Quest session")
+    assert client.evaluate("document.getElementById('mouse-start').disabled && document.getElementById('restore_initial').hidden")
+    wait_for(lambda: client.evaluate("document.getElementById('encoder-joints').textContent.includes('J7 12.5°')"),
+             "seven physical encoder readings")
+    wait_for(lambda: client.evaluate("questFixture.hudLines.some(s => s.includes('Live')) && "
+                                     "Object.values(questFixture.robotPixels).every(n=>n>30)"),
+             "camera HUD and both stereo robot meshes")
+    client.evaluate("questFixture.panelPoint=[81,65];questFixture.samplePanel=true")
+    wait_for(lambda: client.evaluate("Object.keys(questFixture.panelPixels).length===2"), "stereo camera pixels")
+    for pixel in client.evaluate("Object.values(questFixture.panelPixels)"):
+        assert pixel[0] > 200 and max(pixel[1:3]) < 45, pixel
+
+    def chord(down):
+        value = int(down)
+        client.evaluate(f"questFixture.button(4,{value},'left');questFixture.button(4,{value},'right')")
+        wait_for(lambda: all(hand["buttons"][4]["pressed"] == down for hand in station.state()["hands"].values()),
+                 "A and X delivered")
+
+    ack = station.state()["ack"]
+    camera = station.recorder.status()["selected_camera"]
+    chord(True)
+    chord(False)
+    assert station.hardware_return is None and station.state()["ack"] == ack
+    assert not station.recorder.status()["active"] and station.recorder.status()["selected_camera"] == camera
+    with station.lock:
+        station.physical_arm = {"mode":"drive", "arms":{"right":dict(arm, phase="holding", enabled=True)}, "error":None}
+    wait_for(lambda: client.evaluate("document.getElementById('hardware-status').textContent.includes('motors enabled')"),
+             "robot drive and enable state shown")
+    if station.state()["held"]:
+        client.click("resume")
+    client.click("restore_initial")
+    wait_for(lambda: station.hardware_return, "explicit physical workstation button")
+    previous = station.hardware_return["id"]
+    client.evaluate("questFixture.button(1,1)")
+    wait_for(lambda: station.hardware_return is None, "side grip cancels workstation return")
+    client.evaluate("questFixture.button(1,0)")
+    wait_for(lambda: not station.state()["hands"]["right"]["buttons"][1]["pressed"], "side grip released")
+    chord(True)
+    wait_for(lambda: station.hardware_return and station.hardware_return["id"] > previous,
+             "fresh physical controller return request")
+    chord(False)
+    assert station.state()["ack"] == ack+1 and station.recorder.status()["selected_camera"] == camera
+    assert not station.recorder.status()["active"]
+    client.evaluate("questFixture.button(5,1)")
+    wait_for(lambda: station.state()["held"] and station.hardware_return is None, "physical right B stops return")
+    assert not client.errors, client.errors
+    print("Read-only and drive modes, physical return/stop, encoder display and stereo model with camera passed.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--browser", help="Chrome/Chromium/Edge executable")
     parser.add_argument("--episodes", type=Path, help="Keep the browser-generated episode in this directory")
-    parser.add_argument("--stick-cameras", action="store_true",
-                        help="Test stick-mode and three OpenCV file sources through the Quest camera panel")
+    scenario = parser.add_mutually_exclusive_group()
+    scenario.add_argument("--stick-cameras", action="store_true",
+                          help="Test stick-mode and three OpenCV file sources through the Quest camera panel")
+    scenario.add_argument("--robot-ui", action="store_true",
+                          help="Test robot-mode Quest controls with fake encoders and camera files")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="openarm-ui-") as temp:
         tmp = Path(temp)
         episodes = args.episodes or tmp / "episodes"
-        cfg = file_cameras(tmp) if args.stick_cameras else None
+        cfg = file_cameras(tmp) if args.stick_cameras or args.robot_ui else None
         station = Station(episodes, gripper_mode="stick" if cfg else "trigger", camera_config=cfg)
         try:
             with make_server("127.0.0.1", 0, station) as httpd:
@@ -556,6 +619,9 @@ def main():
                     with browser(args.browser or locate_browser(), tmp / "profile") as client:
                         address = f"http://127.0.0.1:{httpd.server_port}/"
                         try:
+                            if args.robot_ui:
+                                exercise_robot_ui(client, address, station)
+                                return
                             name = (exercise_camera_workflow if cfg else exercise)(client, address, station)
                             check_episode(episodes / name)
                             if not cfg:

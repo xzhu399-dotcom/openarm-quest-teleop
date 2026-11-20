@@ -44,14 +44,27 @@ function jawReadout(value) {
   return (value < 0 ? 'Open ' : 'Close ') + Math.round(Math.abs(value)*100)+'%';
 }
 function setModeControls() {
-  const questControls = mode === 'quest' || (mode === 'observer' && state.grip_only);
+  const physical = state.physical_arm, robotDrive = physical?.mode === 'drive';
+  const questControls = mode === 'quest' || (mode === 'observer' && (state.grip_only || physical));
+  $('workspace-title').textContent = physical ? 'Robot teleoperation' : 'Robot simulator';
+  $('workspace-description').textContent = physical
+    ? (robotDrive ? 'Drive the configured hardware with Quest controllers. Right B stops physical motion. '
+                  : 'Read encoders with motor commands disabled. ') +
+      'The headset shows the simulated arm targets and camera view.'
+    : 'Drive the simulated OpenArm with a Quest controller or a mouse.';
+  $('restore_initial').hidden = Boolean(state.gripper_bench || (physical && !robotDrive));
+  $('restore_initial').textContent = robotDrive ? 'Return physical robot to startup pose' : 'Return arms to home';
+  $('home-help').hidden = Boolean(physical ? !robotDrive : !state.grip_only || state.gripper_bench);
+  $('home-help').textContent = robotDrive
+    ? ' Release both grips and press right A and left X together to return the configured hardware to its measured startup pose.'
+    : ' Release both grips and press right A and left X together to return the arms to their startup pose.';
   $('mouse-modes').hidden = Boolean(questControls);
   $('face-b').hidden = $('hold-panel').hidden = Boolean(state.grip_only);
-  $('return-help').hidden = Boolean(state.grip_only);
+  $('return-help').hidden = Boolean(state.grip_only || state.physical_arm);
   $('mouse-start').hidden = mode !== 'observer';
   $('xr-start').hidden = mode !== 'observer';
   $('stop').hidden = mode === 'observer';
-  $('mouse-start').disabled = switching || Boolean(state.gripper_bench);
+  $('mouse-start').disabled = switching || state.gripper_bench === undefined || Boolean(state.gripper_bench || state.physical_arm);
   $('xr-start').disabled = !xrMode || switching;
   $('clutch').disabled = mode !== 'mouse';
   $('trigger').disabled = mode !== 'mouse';
@@ -98,7 +111,8 @@ async function request(path, body) {
     }
     if (num >= latestApplied) {
       latestApplied = num;
-      const controlsChanged = state.gripper_mode !== data.gripper_mode || state.grip_only !== data.grip_only;
+      const controlsChanged = state.gripper_mode !== data.gripper_mode || state.grip_only !== data.grip_only ||
+        state.physical_arm?.mode !== data.physical_arm?.mode || Boolean(state.gripper_bench) !== Boolean(data.gripper_bench);
       if (state.recording?.selected_camera !== data.recording?.selected_camera ||
           (data.recording?.active && !state.recording?.active)) {
         displayedId = '';
@@ -136,7 +150,8 @@ function resetEdges() {
   edges.clear();
   restoreChord = false;
 }
-function enqueue(action) {
+function enqueue(action, sourceTime) {
+  if (state.recording?.finalizing && (action === 'record' || action === 'finish_return')) return;
   if (events.length >= 24) {
     // Report the input gap to the receiver before accepting more button events.
     if (!eventOverflow) {
@@ -147,15 +162,17 @@ function enqueue(action) {
     }
     return;
   }
-  events.push({id: nextEvent++, action});
+  const event = {id: nextEvent++, action};
+  if (action === 'restore_robot_initial') event.time_ms = Math.min(sourceTime, performance.now());
+  events.push(event);
 }
-function readEdges(hands) {
+function readEdges(hands, sourceTime) {
   if (mode === 'quest' && state.gripper_bench === undefined) return;
-  const questSimulator = mode === 'quest' && state.gripper_bench === null;
+  const useHomeChord = mode === 'quest' && state.gripper_bench === null;
   const taps = [];
   for (const side of sides) {
     const hand = hands[side];
-    const actions = side === 'left' ? ['view','mark'] : questSimulator ? ['record'] : ['record','hold'];
+    const actions = side === 'left' ? ['view','mark'] : useHomeChord && !state.physical_arm ? ['record'] : ['record','hold'];
     if (!hand?.pose || !touchLayout(hand.profile,side).length) {
       for (const action of actions) edges.delete(action);
       continue;
@@ -165,7 +182,7 @@ function readEdges(hands) {
       const previous = edges.get(action);
       const sameSource = previous && previous.source === hand.source;
       const pressed = down && sameSource && previous.down === false;
-      if (questSimulator && (action === 'record' || action === 'view')) {
+      if (useHomeChord && (action === 'record' || action === 'view')) {
         // A and X are solo taps on release. Overlapping presses form one chord,
         // even when the two hands press on different XR frames.
         const pending = down && sameSource && !restoreChord && (pressed || previous.pending);
@@ -184,11 +201,12 @@ function readEdges(hands) {
       edges.set(action, {source:hand.source, down});
     }
   }
-  if (questSimulator) {
+  if (useHomeChord) {
     const a = edges.get('record'), x = edges.get('view');
     if (!restoreChord && a?.pending && x?.pending) {
       restoreChord = true;
-      enqueue('restore_initial');
+      if (!state.physical_arm) enqueue('restore_initial');
+      else if (state.physical_arm.mode === 'drive') enqueue('restore_robot_initial', sourceTime);
     } else {
       for (const action of taps) enqueue(action);
     }
@@ -217,7 +235,7 @@ function trackGripEpochs(hands) {
 async function transmit(input, force = false) {
   if (!sessionId) return;
   trackGripEpochs(input.hands);
-  if (!visibleLoss && input.visible) readEdges(input.hands);
+  if (!visibleLoss && input.visible) readEdges(input.hands, input.time_ms);
   if (inFlight || (!force && performance.now()-lastSend < 28)) return;
   inFlight = true;
   const owner = sessionId, reset = frameReset, inactive = visibleLoss, started = performance.now();
@@ -433,9 +451,13 @@ pad.addEventListener('wheel', e => {
   if (e.altKey || mouseMode === 'rotate') mouse.q = multiply(mouse.q,axisTurn([0,0,1],dy*.002));
   else if (mouseMode === 'move') mouse.p[2] += dy*.0004;
 }, {passive:false});
-for (const action of ['capture','restore_initial','record','finish_return','mark','view','hold','resume']) {
+for (const action of ['capture','record','finish_return','mark','view','hold','resume']) {
   $(action).addEventListener('click', () => control(action));
 }
+$('restore_initial').addEventListener('click', () => {
+  if (!state.physical_arm) control('restore_initial');
+  else if (state.physical_arm.mode === 'drive' && state.local_controls) control('restore_robot_initial');
+});
 function selectSide(value) {
   side = value;
   for (const s of sides) $(s+'-tab').setAttribute('aria-pressed', String(s === side));
@@ -465,7 +487,17 @@ function updateScene(hand) {
   drawScene(pad,state.hands,side);
   lastScene=key;
 }
-function benchStatus() {
+function hardwareStatus() {
+  const physical = state.physical_arm;
+  if (physical) {
+    const parts = [physical.mode === 'drive' ? 'Robot drive' : 'Robot read-only'];
+    for (const [name, arm] of Object.entries(physical.arms || {})) {
+      const enable = arm.enabled === true ? 'motors enabled' : arm.enabled === false ? 'motors disabled' : 'enable state unknown';
+      parts.push(name + ' ' + arm.phase + ' · ' + enable);
+    }
+    if (physical.error) parts.push(physical.error);
+    return parts.join(' · ');
+  }
   const bench = state.gripper_bench;
   if (!bench) return '';
   const mode = bench.enabled === null ? 'disable unconfirmed' : bench.mode === 'shadow' ? 'read-only' :
@@ -476,8 +508,8 @@ function benchStatus() {
 
 function render() {
   const h = state.hands?.[side], rec = state.recording || {};
-  $('hardware-status').textContent = benchStatus() || 'Simulation';
-  if (state.gripper_bench) $('mouse-start').disabled = true;
+  const physical = state.physical_arm;
+  $('hardware-status').textContent = hardwareStatus() || (state.gripper_bench === undefined ? 'Connecting to receiver' : 'Simulation');
   const source = h?.profile || '';
   const inputLabel = state.session ? (state.frame === 'mouse-local' || state.hands?.right?.profile === 'mouse' ? 'Virtual right Quest controller' : 'Quest controllers') : 'Waiting for input';
   $('source-label').textContent = inputLabel + (state.session && mode === 'observer' ? ' · observing' : '');
@@ -490,6 +522,14 @@ function render() {
     ['Pitch','Yaw','Roll'][i] + ' ' + number(angle,0) + '°').join(' · ') : '—';
   $('robot-joints').textContent = robot ? robot.joint_angles_rad.map((v,i) =>
     'J' + (i+1) + ' ' + number(v*180/Math.PI,1) + '°').join('  ·  ') : 'Waiting for robot joints';
+  const arm = physical?.arms?.[side];
+  $('encoder-joints').hidden = !physical;
+  if (physical) {
+    const values = arm?.measured_deg;
+    $('encoder-joints').textContent = !arm ? 'This side is simulation only.' : Array.isArray(values) && values.length
+      ? 'Physical encoders · ' + values.map((deg,i) => 'J'+arm.joints[i]+' '+number(deg,1)+'°').join('  ·  ')
+      : 'Waiting for physical encoder readings.';
+  }
   $('pickup-help').hidden = !h?.clutched || (stickMode() ? h.stick_live : h.trigger_live);
   $('pickup-help').textContent = stickMode() ? 'Center the thumbstick to take over the jaw opening.'
     : 'Grasp held. Bring the trigger to ' + number(h?.closure*100,0) + '% to take over the jaw opening.';
@@ -509,16 +549,18 @@ function render() {
   $('capture').disabled = !state.session || !Object.values(state.hands || {}).some(v => v?.pose);
   $('timer').textContent = clock(rec.elapsed_s);
   const returning = state.trial_return?.status === 'returning';
-  $('restore_initial').hidden = Boolean(state.gripper_bench);
-  $('restore_initial').disabled = returning || !state.owner || !state.head || !state.visible || state.held ||
+  const robotDrive = physical?.mode === 'drive';
+  const physicalReturning = Object.values(physical?.arms || {}).some(arm => arm.phase === 'returning');
+  $('restore_initial').disabled = (robotDrive && !state.local_controls) || returning || physicalReturning ||
+    !state.owner || !state.head || !state.visible || state.held ||
     !Object.values(state.hands || {}).some(hand => hand.tracked);
-  $('home-help').hidden = !state.grip_only || Boolean(state.gripper_bench);
-  $('record').textContent = rec.active ? (state.grip_only ? 'Save recording' : 'Save & stay') : 'Start recording';
-  $('record').disabled = returning && state.trial_return.target !== 'home';
-  $('finish_return').hidden = !rec.active || Boolean(state.grip_only);
-  $('mark').disabled = !rec.active;
+  $('record').textContent = rec.finalizing ? 'Saving trial' :
+    rec.active ? (state.grip_only ? 'Save recording' : 'Save & stay') : 'Start recording';
+  $('record').disabled = Boolean(rec.finalizing || (returning && state.trial_return.target !== 'home'));
+  $('finish_return').hidden = !rec.active || Boolean(rec.finalizing || state.grip_only || physical);
+  $('mark').disabled = !rec.active || Boolean(rec.finalizing);
   const trial = trialStatus();
-  $('rec-state').textContent = rec.active ? 'Recording' : trial.title;
+  $('rec-state').textContent = rec.active && !rec.finalizing ? 'Recording' : trial.title;
   $('trial-status').hidden = !trial.detail;
   $('trial-status').textContent = trial.detail;
   $('rec-state').classList.toggle('active',Boolean(rec.active));
@@ -548,12 +590,15 @@ function render() {
 }
 function trialStatus() {
   const rec = state.recording || {}, result = state.trial_return || {};
+  if (rec.finalizing) return {title:'Saving trial', detail:''};
+  if (rec.last_episode_status === 'start_failed') return {title:'Trial did not start', detail:rec.error || ''};
   const failure = {start_failed:'Trial did not start',save_failed:'Trial save failed',
                    incomplete:'Incomplete trial'}[result.status];
   if (failure) return {title:failure, detail:result.reason || rec.error || ''};
   const title = rec.active ? 'REC ' + clock(rec.elapsed_s) :
     ({incomplete:'Incomplete trial', interrupted:'Interrupted trial', saved:'Trial saved'}[rec.last_episode_status]
-      || (rec.episode && result.status !== 'idle' ? 'Trial saved' : 'Idle'));
+      || 'Idle');
+  if (state.physical_arm) return {title, detail:state.hardware_return_notice || ''};
   if (result.target === 'home') {
     const prefix = {skipped:'Return skipped. ', cancelled:'Return cancelled. '}[result.status] || '';
     return {title, detail:prefix + result.reason};
@@ -580,12 +625,12 @@ function preview() {
   const liveStatus = ({unavailable:'Disconnected', stalled:'Stalled', waiting:'Waiting for frame'})[src?.status] || cameraProblem ||
       (!Number.isFinite(age) ? 'Waiting for frame' : stale ? 'Stalled' : 'Live');
   const trial = trialStatus();
-  return {image:cameraCanvas, hands:rec.camera_mode === 'opencv' ? null : state.hands,
+  return {image:cameraCanvas, hands:rec.camera_mode === 'opencv' && !state.physical_arm ? null : state.hands,
     info:{camera:matching && camera.label ? camera.label : rec.camera_label || 'Waiting for camera',
       index:matching ? camera.index : null, stale, liveStatus,
       ageBucket:Number.isFinite(age) ? Math.floor(age/100)*100 : null,
       status: (state.held ? 'HOLD · ' : '') + trial.title,
-      detail:[benchStatus(), state.grip_only && state.reason, rec.error || trial.detail].filter(Boolean).join(' · ')}};
+      detail:[hardwareStatus(), state.grip_only && state.reason, rec.error || trial.detail].filter(Boolean).join(' · ')}};
 }
 function updateCameraAge() {
   const {info} = preview();

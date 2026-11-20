@@ -216,6 +216,24 @@ class CliChecks(unittest.TestCase):
         self.assertEqual([self.fake.timeouts[i] for i in (1, 2, 3)], [0, 0, 0])
         self.assertTrue(self.fake.closed)
 
+    def test_external_command_guard_can_freeze_a_joint_inside_a_bus_burst(self):
+        preloaded, enabled, sent = [], [], []
+        with cli.Session(self.arm, 'left', (1, 2)) as session:
+            session.prepare(1, on_preload=lambda j,q,ns: preloaded.append((j,q,ns)))
+            session.enable_prepared(guard=lambda: None, on_enabled=lambda j,ns: enabled.append((j,ns)))
+            start = cli.time.monotonic()
+            session.read_states(deadline=start + cli.MAX_CYCLE)
+            previous = dict(session.refs)
+            requested = {j:q + .005 for j,q in previous.items()}
+            session.send_references(requested,1,1,start,
+                                    lambda j,q,hold: q if j == 1 else hold,
+                                    lambda j,q,ns: sent.append((j,q,ns)))
+            self.assertEqual([v[0] for v in preloaded], [1,2])
+            self.assertEqual([v[0] for v in enabled], [1,2])
+            self.assertEqual(session.refs, {1:requested[1],2:previous[2]})
+            self.assertEqual({j:q for j,q,ns in sent}, session.refs)
+            self.assertTrue(all(ns >= session.feedback_ns[j] for j,q,ns in sent))
+
     def test_uncertain_watchdog_write_restored_without_enable(self):
         self.fake.fail_watchdog_once = 2
         with self.assertRaises(IOError):
